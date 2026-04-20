@@ -137,7 +137,7 @@ Planning（规划） → Acting（执行） → Reflecting（反思）
 |------|------|
 | **Python 3.10+** | 核心开发语言 |
 | **Streamlit** | Web 交互界面 |
-| **智谱 GLM-4 / OpenAI Compatible** | 大语言模型推理与生成 |
+| **智谱 GLM-5.1 / OpenAI Compatible** | 大语言模型推理与生成 |
 | **FAISS** | 向量相似度检索 |
 | **akshare** | A 股金融数据获取 |
 | **NumPy / Pandas** | 数值计算与数据处理 |

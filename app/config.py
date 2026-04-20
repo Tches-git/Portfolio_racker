@@ -10,13 +10,13 @@ except ImportError:
     pass
 
 ZHIPUAI_API_KEY = os.getenv("ZHIPUAI_API_KEY", "")
-LLM_MODEL = os.getenv("LLM_MODEL", "glm-4-flash")
+LLM_MODEL = os.getenv("LLM_MODEL", "glm-5.1")
 
 # LLM Provider 切换: zhipu / openai
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "zhipu")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
-LLM_MODEL_PLUS = os.getenv("LLM_MODEL_PLUS", "glm-4-plus")
+LLM_MODEL_PLUS = os.getenv("LLM_MODEL_PLUS", "glm-5.1")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "embedding-3")
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"

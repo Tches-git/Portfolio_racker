@@ -6,7 +6,7 @@
 
 ## 版本一：详细版（适合项目经历重点展示）
 
-**金融研报智能分析系统** | Python, GLM-4, FAISS, Streamlit | 个人项目
+**金融研报智能分析系统** | Python, GLM-5.1, FAISS, Streamlit | 个人项目
 
 - 设计并实现基于 **ReAct Agent + RAG** 的 A 股研报自动生成系统，输入股票代码后自动完成数据采集、财务分析、估值建模和报告撰写，输出结构化 Markdown 深度研报
 - 自研 **ReAct Agent 推理引擎**，实现“规划-执行-反思”三阶段闭环，集成 11 个金融分析工具，支持 Function Calling 与文本 ReAct 双模式自动降级；反思阶段可识别缺失项并触发补充研究
@@ -19,7 +19,7 @@
 
 ## 版本二：精简版（适合一般项目经历条目）
 
-**金融研报智能分析系统** | Python, GLM-4, FAISS, Streamlit | 个人项目
+**金融研报智能分析系统** | Python, GLM-5.1, FAISS, Streamlit | 个人项目
 
 - 基于 **ReAct Agent + RAG** 架构实现 A 股研报自动生成系统，自研三阶段 Agent 推理闭环，集成 11 个金融分析工具，支持 Function Calling 与文本模式双路降级
 - 构建 FAISS 语义检索系统（2048 维向量 + LLM 重排序），实现 PDF/TXT 增量入库、分析结果回灌和写作期多轮检索
@@ -30,7 +30,7 @@
 
 ## 版本三：极简版（适合空间紧凑的简历）
 
-**金融研报智能分析系统** | Python, GLM-4, FAISS, Streamlit | 个人项目
+**金融研报智能分析系统** | Python, GLM-5.1, FAISS, Streamlit | 个人项目
 
 - 基于 ReAct Agent + RAG 架构实现 A 股研报自动生成，集成 11 个金融工具，支持 Function Calling / 文本模式双路降级
 - 构建 FAISS 检索 + LLM 重排序 + 知识回灌闭环；实现全向量化蒙特卡洛 DCF、杜邦分析、风险识别等量化模块

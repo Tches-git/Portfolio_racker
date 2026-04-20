@@ -28,7 +28,7 @@
 │  阶段 3: Report Agent（RAG 增强写作）                     │
 │    5 轮主题检索 → FAISS 召回 → LLM 重排序                 │
 │    历史记忆对比 → 同行业交叉引用                          │
-│    glm-4-plus 生成 4000+ 字深度研报                       │
+│    glm-5.1 生成 4000+ 字深度研报                          │
 │                                                          │
 │  后处理: 分析结论反哺知识库 → 保存分析记忆                │
 └──────────────────────────────────────────────────────────┘
@@ -66,7 +66,7 @@ akshare API ──→ 公司信息/财务/同行/新闻
       │             │             │
       └─────────────┼─────────────┘
                     ▼
-           Report Agent (glm-4-plus)
+           Report Agent (glm-5.1)
                     │
                     ▼
             Markdown 深度研报
@@ -299,7 +299,7 @@ python main.py ablation --llm-judge
 
 | 决策点 | 选择 | 替代方案 | 选择理由 |
 |--------|------|----------|----------|
-| LLM | 智谱 GLM-4 | OpenAI GPT-4 / 通义千问 | 国产模型，支持中文金融语料，Function Calling 能力完善，价格低 |
+| LLM | 智谱 GLM-5.1 | OpenAI GPT-4 / 通义千问 | 国产模型，支持中文金融语料，Function Calling 能力完善，价格低 |
 | 向量检索 | FAISS (IndexFlatIP) | Milvus / Chroma | 无需外部服务，本地运行，对数据规模（<1万条）够用 |
 | 数据源 | akshare | Tushare / Wind | 开源免费，覆盖 A 股全量数据，无需 Token 配额 |
 | Agent 框架 | 自研 ReAct | LangChain / AutoGen | 可控性强，减少黑盒依赖，便于调试和定制 Prompt |
