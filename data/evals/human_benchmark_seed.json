@@ -1,0 +1,23 @@
+[
+  {
+    "stock_code": "600519",
+    "stock_name": "贵州茅台",
+    "industry": "白酒",
+    "review_focus": ["高毛利与品牌护城河是否被正确解释", "估值锚是否克制"],
+    "key_risks": ["消费需求波动", "渠道库存变化"]
+  },
+  {
+    "stock_code": "000858",
+    "stock_name": "五粮液",
+    "industry": "白酒",
+    "review_focus": ["量价逻辑拆解", "同行比较是否充分"],
+    "key_risks": ["价格带竞争", "终端动销波动"]
+  },
+  {
+    "stock_code": "300750",
+    "stock_name": "宁德时代",
+    "industry": "新能源",
+    "review_focus": ["资本开支与盈利质量", "价格战风险传导"],
+    "key_risks": ["行业价格战", "海外需求波动"]
+  }
+]
