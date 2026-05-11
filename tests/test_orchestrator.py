@@ -635,16 +635,45 @@ def test_build_report_external_data_block_contains_expected_sections():
 def test_build_report_prompt_requirements_and_quality_bar():
     orchestrator = orch_mod.AgentOrchestrator()
     state = AnalysisState(stock_code="600519", stock_name="测试公司")
+    event_state = AnalysisState(stock_code="600519", stock_name="测试公司", event_context={"event_id": "e1", "title": "重大公告"})
 
     requirements = orchestrator._build_report_prompt_requirements(state)
+    event_requirements = orchestrator._build_report_prompt_requirements(event_state)
     quality_bar = orchestrator._build_report_prompt_quality_bar()
 
     assert "## 输出要求（必须严格遵守）" in requirements
     assert "# 测试公司（600519）深度研究报告" in requirements
     assert "不要机械重复" in requirements
     assert "禁止评级前后自相矛盾" in requirements
+    assert "事件触发研究" in event_requirements
     assert "## 质量标准" in quality_bar
     assert "优先做“分析+判断”" in quality_bar
+
+
+def test_event_context_is_formatted_and_injected_into_prompts():
+    orchestrator = orch_mod.AgentOrchestrator()
+    state = AnalysisState(
+        stock_code="600519",
+        stock_name="测试公司",
+        event_context={
+            "event_id": "e1",
+            "title": "高影响公告",
+            "summary": "公司披露重大事项",
+            "source": "交易所公告",
+            "impact_level": "high",
+            "impact_scope": "fundamentals",
+            "confidence": 0.82,
+            "related_sources": [{"title": "公告原文", "url": "https://example.com/a"}],
+        },
+    )
+
+    orchestrator._hydrate_event_context(state)
+    research_task = orchestrator._build_research_task("600519", state)
+
+    assert "事件ID: e1" in state.sections["event_context"]
+    assert "高影响公告" in state.runtime_input_payload["event_context"]["title"]
+    assert "触发事件材料" in research_task
+    assert "fundamentals" in research_task
 
 
 def test_write_report_with_rag_calls_chat_with_built_prompt(monkeypatch):

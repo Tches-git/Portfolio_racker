@@ -15,7 +15,9 @@ from app.api.schemas import (
     LatestReportResponse,
     QualitySummaryDTO,
     ReportSummaryDTO,
+    RunEventContextDTO,
     RunEventDTO,
+    RunEventReportSummaryDTO,
     RunMetricsDTO,
     RunObservabilityDTO,
     StockHistoryResponse,
@@ -143,6 +145,8 @@ def build_run_response(run) -> AnalysisRunResponse:
         metrics = dict(getattr(run.state, 'run_metrics', {}) or {})
     exports = list(getattr(run, 'exports', []) or [])
     events = list(getattr(run, 'events', []) or [])
+    event_context = dict(getattr(run, 'event_context', {}) or {})
+    event_report_summary = dict(getattr(run, 'event_report_summary', {}) or {})
     audit_events = list(getattr(run, 'audit_events', []) or [])
     stock_code = str(getattr(run, 'stock_code', '') or '')
     status = str(getattr(run, 'status', '') or '')
@@ -168,6 +172,8 @@ def build_run_response(run) -> AnalysisRunResponse:
         history_url=run.history_url,
         exports=[ExportArtifactDTO(**item) for item in exports],
         events=[RunEventDTO(**item) for item in events],
+        event_context=RunEventContextDTO(**event_context),
+        event_report_summary=RunEventReportSummaryDTO(**event_report_summary),
         audit_events=[RunAuditEventDTO(**item) for item in audit_events],
         run_metrics=RunMetricsDTO(
             duration_s=float(metrics.get('duration_s', 0.0) or 0.0),

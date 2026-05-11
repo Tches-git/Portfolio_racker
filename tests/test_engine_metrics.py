@@ -12,8 +12,8 @@ class DummyOrchestrator:
         self.agent_trace = []
         self.rag_trace = []
 
-    def run(self, stock_code: str, *, uploaded_items=None) -> AnalysisState:
-        state = AnalysisState(stock_code=stock_code, final_report="# report")
+    def run(self, stock_code: str, *, uploaded_items=None, event_context=None) -> AnalysisState:
+        state = AnalysisState(stock_code=stock_code, final_report="# report", event_context=dict(event_context or {}))
         state.sections["agent_steps"] = "5"
         state.sections["rag_hits"] = "2"
         return state

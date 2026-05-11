@@ -14,7 +14,7 @@ function runTone(status: AnalysisRunResponse['status']) {
 
 export function GlobalRunCenter() {
   const [runs, setRuns] = useState<AnalysisRunResponse[]>([])
-  const [workspace, setWorkspace] = useState<AnalysisRunListResponse['workspace']>({ tracked_stocks: [], most_active_stock: '', latest_completed_stock: '', failed_stock_count: 0, history_backed_stock_count: 0, recommended_concurrency: 3, active_limit_reached: false, observability_status: 'enhanced', collaboration_ready: true, collaborator_count: 0, audited_action_count: 0, archived_run_count: 0, stale_run_count: 0, recovery_status: 'normal', worker_count: 2, retry_scheduled_count: 0, queue_mode: 'worker_queue', store_backend: 'sqlite-wal', schema_version: 3, wal_enabled: true, backup_available: false, last_backup_path: '', ops_status: 'healthy', alert_count: 0, failure_rate: 0, avg_duration_s: 0, p95_duration_s: 0 })
+  const [workspace, setWorkspace] = useState<AnalysisRunListResponse['workspace']>({ tracked_stocks: [], most_active_stock: '', latest_completed_stock: '', failed_stock_count: 0, history_backed_stock_count: 0, recommended_concurrency: 3, active_limit_reached: false, observability_status: 'enhanced', collaboration_ready: true, collaborator_count: 0, audited_action_count: 0, archived_run_count: 0, stale_run_count: 0, recovery_status: 'normal', worker_count: 2, retry_scheduled_count: 0, queue_mode: 'worker_queue', store_backend: 'sqlite-wal', schema_version: 5, wal_enabled: true, backup_available: false, last_backup_path: '', ops_status: 'healthy', alert_count: 0, failure_rate: 0, avg_duration_s: 0, p95_duration_s: 0 })
   const [stats, setStats] = useState({ total: 0, queued: 0, running: 0, completed: 0, failed: 0 })
   const [syncLabel, setSyncLabel] = useState('正在同步任务状态...')
 

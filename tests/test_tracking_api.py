@@ -29,6 +29,47 @@ def test_stock_events_endpoint_returns_timeline_contract(monkeypatch):
     assert payload["items"][0]["event_type"] == "broker_view"
 
 
+def test_stock_event_impact_review_endpoint_links_event_runs(monkeypatch):
+    event = MarketEvent(
+        event_id="e_review",
+        stock_code="600519",
+        stock_name="贵州茅台",
+        title="高影响公告",
+        event_type="announcement",
+        impact_level="high",
+        sentiment="negative",
+        status="converted_to_report",
+    )
+    monkeypatch.setattr("app.api.server.collect_historical_events", lambda stock_codes=None, limit=20: EventCollection(items=[event], total=1, high_impact_count=1, source_count=1))
+
+    class FakeRun:
+        run_id = "run_review"
+        stock_code = "600519"
+        status = "completed"
+        updated_at = "2026-05-08T10:00:00"
+        created_at = "2026-05-08T09:00:00"
+        event_context = {"event_id": "e_review"}
+        event_report_summary = {"report_delta_hint": "评级维持推荐", "event_commentary_url": "/api/v1/exports/event_commentary.md"}
+        exports = []
+
+    class FakeRunManager:
+        def list_event_runs(self, *, stock_code="", limit=40):
+            assert stock_code == "600519"
+            return [FakeRun()]
+
+    monkeypatch.setattr("app.api.server.run_manager", FakeRunManager())
+
+    payload = TestClient(app).get("/api/v1/stocks/600519/event-impact-review").json()
+
+    assert payload["stock_code"] == "600519"
+    assert payload["high_impact_count"] == 1
+    assert payload["converted_count"] == 1
+    assert payload["event_driven_run_count"] == 1
+    assert payload["dominant_event_types"] == ["announcement"]
+    assert payload["replay_items"][0]["run_id"] == "run_review"
+    assert payload["replay_items"][0]["event_commentary_url"].endswith("event_commentary.md")
+
+
 def test_events_endpoint_supports_history_mode(monkeypatch):
     event = MarketEvent(event_id="h1", stock_code="600519", title="历史事件")
     captured = {}
@@ -57,7 +98,7 @@ def test_event_detail_endpoint_returns_single_event(monkeypatch):
 
 
 def test_event_analyze_endpoint_starts_run(monkeypatch):
-    event = MarketEvent(event_id="e4", stock_code="600519", title="重大公告", provider="cninfo")
+    event = MarketEvent(event_id="e4", stock_code="600519", title="重大公告", provider="cninfo", impact_level="high", event_type="announcement")
     monkeypatch.setattr("app.api.server.find_market_event", lambda event_id, stock_codes=None: event)
     monkeypatch.setattr("app.api.server.save_events", lambda events: None)
     monkeypatch.setattr("app.api.server.update_event_status", lambda event_id, status, note="": event)
@@ -69,6 +110,8 @@ def test_event_analyze_endpoint_starts_run(monkeypatch):
         def start_event_run(self, stock_code, *, event_context, actor="system", role="admin"):
             assert stock_code == "600519"
             assert event_context["event_id"] == "e4"
+            assert event_context["impact_level"] == "high"
+            assert event_context["event_type"] == "announcement"
             return FakeRun()
 
         def get_run_response(self, run_id):

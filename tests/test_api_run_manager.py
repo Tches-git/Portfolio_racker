@@ -16,7 +16,7 @@ class FlakyEngine:
     def __init__(self, on_step=None):
         self.on_step = on_step
 
-    def run(self, stock_code: str, *, uploaded_items=None):
+    def run(self, stock_code: str, *, uploaded_items=None, event_context=None):
         FlakyEngine.calls += 1
         if FlakyEngine.calls == 1:
             raise RuntimeError('temporary failure')
@@ -30,12 +30,14 @@ class FlakyEngine:
 
 class DummyEngine:
     calls = 0
+    last_event_context = None
 
     def __init__(self, on_step=None):
         self.on_step = on_step
 
-    def run(self, stock_code: str, *, uploaded_items=None):
+    def run(self, stock_code: str, *, uploaded_items=None, event_context=None):
         DummyEngine.calls += 1
+        DummyEngine.last_event_context = dict(event_context or {})
         state = SimpleNamespace(
             final_report='# report',
             stock_code=stock_code,
@@ -45,6 +47,8 @@ class DummyEngine:
                 'trace_export': f'trace_{stock_code}_demo.log',
                 'report_html_export': f'report_{stock_code}_demo.html',
                 'source_refs_export': f'sources_{stock_code}_demo.json',
+                'rating': '推荐',
+                'rating_detail': '事件影响可控',
             },
         )
         if self.on_step:
@@ -57,6 +61,8 @@ def test_build_run_response_maps_metrics_and_exports():
     run.detail = 'done'
     run.exports = [{'kind': 'markdown', 'filename': 'report_600519_demo.md', 'path': 'output/report_600519_demo.md', 'download_url': '/api/v1/exports/report_600519_demo.md'}]
     run.events = [{'timestamp': '2026-05-07T11:00:00', 'status': 'completed', 'event': 'run_completed', 'detail': 'done'}]
+    run.event_context = {'event_id': 'e1', 'title': '重大公告', 'impact_level': 'high'}
+    run.event_report_summary = {'trigger_label': '重大公告', 'priority': 'P0 高优先级', 'event_commentary_url': '/api/v1/exports/event_commentary.md'}
     run.state = SimpleNamespace(run_metrics={'duration_s': 1.5, 'llm_calls': 2, 'tool_calls': 4, 'total_tokens': 88, 'success': True})
 
     payload = build_run_response(run)
@@ -66,6 +72,10 @@ def test_build_run_response_maps_metrics_and_exports():
     assert payload.exports[0].filename == 'report_600519_demo.md'
     assert payload.events[0].event == 'run_completed'
     assert payload.run_metrics.total_tokens == 88
+    assert payload.event_context.event_id == 'e1'
+    assert payload.event_context.title == '重大公告'
+    assert payload.event_report_summary.trigger_label == '重大公告'
+    assert payload.event_report_summary.event_commentary_url.endswith('event_commentary.md')
     assert payload.actions.product_route == '/stocks/600519'
     assert payload.actions.suggested_next_action == '查看导出物'
     assert payload.observability.event_count == 1
@@ -95,6 +105,7 @@ def test_run_manager_starts_batch_runs(tmp_path):
 
 def test_run_manager_executes_run_and_persists_completion(monkeypatch, tmp_path):
     DummyEngine.calls = 0
+    DummyEngine.last_event_context = None
     manager = AnalysisRunManager(output_dir=tmp_path)
     monkeypatch.setattr('app.api.run_manager.ReportEngine', DummyEngine)
     monkeypatch.setattr('app.api.run_manager.save_output_files', lambda state, timestamp=None: (tmp_path / 'report.md', tmp_path / 'trace.log'))
@@ -114,6 +125,33 @@ def test_run_manager_executes_run_and_persists_completion(monkeypatch, tmp_path)
     assert any(item['kind'] == 'markdown' for item in current.exports)
     assert current.attempts == 1
     assert current.worker_id == ''
+
+
+def test_run_manager_executes_event_run_with_context(monkeypatch, tmp_path):
+    DummyEngine.calls = 0
+    DummyEngine.last_event_context = None
+    manager = AnalysisRunManager(output_dir=tmp_path)
+    monkeypatch.setattr('app.api.run_manager.ReportEngine', DummyEngine)
+    monkeypatch.setattr('app.api.run_manager.save_output_files', lambda state, timestamp=None: (tmp_path / 'report.md', tmp_path / 'trace.log'))
+
+    run = manager.start_event_run('600519', event_context={'event_id': 'e4', 'title': '重大公告', 'impact_level': 'high'})
+    for _ in range(50):
+        current = manager.get_run(run.run_id)
+        if current.status in {'completed', 'failed'}:
+            break
+        time.sleep(0.02)
+    else:
+        raise AssertionError('event run did not finish in time')
+
+    assert current.status == 'completed'
+    assert current.event_context['event_id'] == 'e4'
+    assert DummyEngine.last_event_context['event_id'] == 'e4'
+    assert current.event_report_summary['trigger_label'] == '重大公告'
+    assert current.event_report_summary['event_commentary_url'].startswith('/api/v1/exports/event_commentary_')
+    assert any(item['kind'] == 'event_commentary' for item in current.exports)
+    assert (tmp_path / current.event_report_summary['event_commentary_filename']).exists()
+    assert build_run_response(current).event_context.impact_level == 'high'
+    assert build_run_response(current).event_report_summary.priority == 'P0 高优先级'
 
 
 def test_run_manager_requeues_transient_failures(monkeypatch, tmp_path):
@@ -266,7 +304,7 @@ def test_run_manager_reports_store_health_and_backup(tmp_path):
 
     assert health['backend'] == 'sqlite-wal'
     assert health['integrity'] == 'ok'
-    assert health['schema_version'] == 3
+    assert health['schema_version'] == 5
     assert Path(backup_path).exists()
     assert payload.workspace.store_backend == 'sqlite-wal'
     assert payload.workspace.backup_available is True
@@ -286,6 +324,8 @@ def test_run_manager_persists_runs_in_sqlite(tmp_path):
         history_url='/api/v1/history/600519',
         exports=[{'kind': 'markdown', 'filename': 'report_600519_demo.md', 'path': 'output/report_600519_demo.md', 'download_url': '/api/v1/exports/report_600519_demo.md'}],
         events=[{'timestamp': '2026-05-07T11:00:00', 'status': 'completed', 'event': 'run_completed', 'detail': 'done'}],
+        event_context={'event_id': 'e9', 'title': '业绩预告', 'impact_level': 'medium'},
+        event_report_summary={'trigger_label': '业绩预告', 'priority': 'P1 持续跟踪'},
         run_metrics={'duration_s': 1.5, 'llm_calls': 2, 'tool_calls': 4, 'total_tokens': 88, 'success': True},
     )
     manager._save_runs()
@@ -297,6 +337,8 @@ def test_run_manager_persists_runs_in_sqlite(tmp_path):
     assert reloaded.retry_of_run_id == 'run_old'
     assert reloaded.exports[0]['filename'] == 'report_600519_demo.md'
     assert reloaded.events[0]['event'] == 'run_completed'
+    assert reloaded.event_context['event_id'] == 'e9'
+    assert reloaded.event_report_summary['trigger_label'] == '业绩预告'
     assert reloaded.run_metrics['total_tokens'] == 88
 
 

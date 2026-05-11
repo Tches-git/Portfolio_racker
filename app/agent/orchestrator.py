@@ -68,8 +68,8 @@ class AgentOrchestrator:
     def tracer(self) -> Tracer | None:
         return self._tracer
 
-    def run(self, stock_code: str, *, uploaded_items: list[dict] | None = None) -> AnalysisState:
-        state = AnalysisState(stock_code=stock_code, ablation_config=self.ablation_config)
+    def run(self, stock_code: str, *, uploaded_items: list[dict] | None = None, event_context: dict | None = None) -> AnalysisState:
+        state = AnalysisState(stock_code=stock_code, ablation_config=self.ablation_config, event_context=dict(event_context or {}))
         self._tracer = Tracer()
         set_active_tracer(self._tracer)
 
@@ -121,6 +121,7 @@ class AgentOrchestrator:
             state,
         )
         state.runtime_input_payload.update({"prefetch": build_prefetch_runtime_payload(state)})
+        self._hydrate_event_context(state)
         self._ingest_uploaded_documents(state, uploaded_items)
         self._hydrate_live_sources(state)
 
@@ -225,6 +226,14 @@ class AgentOrchestrator:
             f"在线工具完成: 成功 {live_tools_payload['success_count']}/{live_tools_payload['tool_count']}",
             state,
         )
+
+    def _hydrate_event_context(self, state: AnalysisState) -> None:
+        if not state.event_context:
+            return
+        text = self._format_event_context_for_prompt(state)
+        state.runtime_input_payload["event_context"] = dict(state.event_context)
+        state.sections["event_context"] = text
+        state.log("  📰 已注入事件触发上下文")
 
     def _prefetch_data(self, state: AnalysisState) -> None:
         from app.data_source.akshare_client import (
@@ -496,6 +505,53 @@ class AgentOrchestrator:
     def _compact_report_context(self, text: str, limit: int, label: str) -> str:
         return compact_report_context(text, limit, label)
 
+    def _format_event_context_for_prompt(self, state: AnalysisState) -> str:
+        context = dict(state.event_context or {})
+        if not context:
+            return ""
+
+        fields = [
+            ("事件ID", "event_id"),
+            ("股票代码", "stock_code"),
+            ("股票名称", "stock_name"),
+            ("标题", "title"),
+            ("摘要", "summary"),
+            ("来源", "source"),
+            ("数据提供方", "provider"),
+            ("发布时间", "published_at"),
+            ("事件类型", "event_type"),
+            ("影响等级", "impact_level"),
+            ("影响方向", "sentiment"),
+            ("影响范围", "impact_scope"),
+            ("置信度", "confidence"),
+            ("分类理由", "reason"),
+            ("状态", "status"),
+            ("人工备注", "note"),
+        ]
+        lines = []
+        for label, key in fields:
+            value = context.get(key)
+            if value in (None, "", []):
+                continue
+            lines.append(f"- {label}: {value}")
+
+        related_sources = context.get("related_sources")
+        if isinstance(related_sources, list) and related_sources:
+            formatted_sources = []
+            for item in related_sources[:5]:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title") or item.get("source") or item.get("url") or "").strip()
+                url = str(item.get("url") or "").strip()
+                if title and url:
+                    formatted_sources.append(f"{title}({url})")
+                elif title:
+                    formatted_sources.append(title)
+            if formatted_sources:
+                lines.append(f"- 相关来源: {'；'.join(formatted_sources)}")
+
+        return "\n".join(lines)
+
     def _wrap_external_data(self, text: str) -> str:
         cleaned = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", " ", text or "")
         cleaned = cleaned.strip()
@@ -639,8 +695,17 @@ class AgentOrchestrator:
 
     def _build_research_task(self, stock_code: str, state: AnalysisState) -> str:
         research_memory_context = self._build_research_memory_context(state)
+        event_context = self._format_event_context_for_prompt(state)
+        event_instruction = ""
+        if event_context:
+            event_instruction = (
+                "本次任务由金融事件触发。请优先判断该事件对基本面、估值、资金面、政策/监管、舆情风险的传导影响，"
+                "并在最终研究结论中明确是否需要调整评级、估值锚或后续跟踪指标。\n\n"
+                f"触发事件材料：\n{self._wrap_external_data(event_context)}\n\n"
+            )
         return (
             f"请对 A 股股票 {stock_code} 进行全面深度研究。\n\n"
+            f"{event_instruction}"
             f"你需要完成以下工作（按合理顺序自主规划）：\n"
             f"1. 获取公司基本信息\n"
             f"2. 获取多年财务数据\n"
@@ -712,6 +777,7 @@ class AgentOrchestrator:
         return {
             "rag_text": rag_text,
             "history_text": history_text,
+            "event_context_text": self._wrap_external_data(self._format_event_context_for_prompt(state) or "无触发事件上下文"),
             "metrics_table": self._wrap_external_data(self._compact_report_context(build_metrics_table(state), 3500, "财务表格")),
             "peers_table": self._wrap_external_data(self._compact_report_context(build_peers_table(state), 1800, "同行表格")),
             "mc_text": self._wrap_external_data(self._compact_report_context(self._section_value(state, "dcf_monte_carlo", "暂无"), 1500, "蒙特卡洛结果")),
@@ -775,6 +841,9 @@ class AgentOrchestrator:
 ### 历史跟踪记录
 {report_context['history_text']}
 
+### 触发事件上下文
+{report_context.get('event_context_text', self._wrap_external_data('无触发事件上下文'))}
+
 ### 结构化长期记忆注入
 {self._wrap_external_data(writing_memory_context)}
 
@@ -801,7 +870,7 @@ class AgentOrchestrator:
 </external_data>"""
 
     def _build_report_prompt_requirements(self, state: AnalysisState) -> str:
-        return f"""## 输出要求（必须严格遵守）
+        base = f"""## 输出要求（必须严格遵守）
 1. **必须使用以下固定一级结构**，不要删节，但各节的展开方式、切入角度与段落组织不要机械重复：
    - `# {state.stock_name}（{state.stock_code}）深度研究报告`
    - `## 一、投资要点`
@@ -827,6 +896,9 @@ class AgentOrchestrator:
 14. 若提供了关系图摘要，应尽量在风险、催化、同行或行业段落中吸收这些关系边，但不能替代现有财务与估值主分析。
 15. **禁止章节之间机械复读同一结论。** 同一判断不要在相邻章节用近义句反复重写；投资要点写结论，后续章节写展开、证据与推导。
 16. **禁止评级前后自相矛盾。** “投资评级”“当前评级”“核心理由”“估值锚”的方向必须一致，不能同时出现互相冲突的评级表述。"""
+        if state.event_context:
+            base += "\n17. 本次为事件触发研究，必须在投资要点、核心风险或投资建议中明确回应触发事件的影响路径和跟踪动作。"
+        return base
 
     def _build_report_prompt_quality_bar(self) -> str:
         return """## 质量标准

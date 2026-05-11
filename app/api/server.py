@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from app.api.download import ExportNotFoundError, resolve_export_file
 from app.api.mappers import build_health_response, map_history_record
 from app.api.run_manager import RunActionError, RunNotFoundError, run_manager
-from app.api.schemas import AnalysisRunCreateRequest, AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateRequest, BatchRunCreateResponse, DailyBriefingResponse, EventAnalyzeRequest, EventStatusUpdateRequest, HealthResponse, LatestReportResponse, MarketEventDTO, MarketEventListResponse, OpsMetricsResponse, ReportDiffResponse, RunAssignmentRequest, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, StoreBackupResponse, StoreHealthResponse, TrackingAlertDTO, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDTO, WatchlistDetailResponse, WatchlistImpactStockDTO, WatchlistListResponse, WatchlistSummaryDTO, WorkspaceStocksResponse
+from app.api.schemas import AnalysisRunCreateRequest, AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateRequest, BatchRunCreateResponse, DailyBriefingResponse, EventAnalyzeRequest, EventImpactReplayItemDTO, EventImpactReviewResponse, EventStatusUpdateRequest, HealthResponse, LatestReportResponse, MarketEventDTO, MarketEventListResponse, OpsMetricsResponse, ReportDiffResponse, RunAssignmentRequest, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, StoreBackupResponse, StoreHealthResponse, TrackingAlertDTO, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDTO, WatchlistDetailResponse, WatchlistImpactStockDTO, WatchlistListResponse, WatchlistSummaryDTO, WorkspaceStocksResponse
 from app.api.services import NotFoundError, get_latest_report, get_stock_history
 from app.data_source.akshare_client import get_recent_news
 from app.memory.store import get_memory_store
@@ -132,6 +132,70 @@ def _rank_impacted_stocks(events) -> list[WatchlistImpactStockDTO]:
     return [WatchlistImpactStockDTO(**item) for item in ranked]
 
 
+def _event_impact_review_response(stock_code: str, collection, runs) -> EventImpactReviewResponse:
+    events = list(collection.items)
+    run_by_event = {
+        str(run.event_context.get('event_id') or ''): run
+        for run in runs
+        if getattr(run, 'event_context', None)
+    }
+    type_counts: dict[str, int] = {}
+    for event in events:
+        event_type = event.event_type or 'other'
+        type_counts[event_type] = type_counts.get(event_type, 0) + 1
+    dominant_types = [
+        item[0] for item in sorted(type_counts.items(), key=lambda item: (item[1], item[0]), reverse=True)[:4]
+    ]
+    stock_name = next((event.stock_name for event in events if event.stock_name), '')
+    latest_event_at = next((event.published_at or event.collected_at for event in events if event.published_at or event.collected_at), '')
+    replay_items = []
+    for event in events[:12]:
+        run = run_by_event.get(event.event_id)
+        summary = dict(getattr(run, 'event_report_summary', {}) or {}) if run else {}
+        commentary_url = str(summary.get('event_commentary_url') or '')
+        if not commentary_url and run:
+            commentary_url = next((item.get('download_url', '') for item in getattr(run, 'exports', []) if item.get('kind') == 'event_commentary'), '')
+        review_line = '尚未触发研报更新'
+        if run:
+            review_line = f"已关联 {run.status} 任务，{summary.get('report_delta_hint') or '等待研报摘要回流'}"
+        elif event.impact_level == 'high':
+            review_line = '高影响事件尚未沉淀为研报，建议优先触发事件点评'
+        replay_items.append(EventImpactReplayItemDTO(
+            event_id=event.event_id,
+            title=event.title,
+            published_at=event.published_at or event.collected_at,
+            event_type=event.event_type,
+            impact_level=event.impact_level,
+            sentiment=event.sentiment,
+            status=event.status,
+            run_id=getattr(run, 'run_id', '') if run else '',
+            run_status=getattr(run, 'status', '') if run else '',
+            event_commentary_url=commentary_url,
+            review_line=review_line,
+        ))
+    converted_count = sum(1 for event in events if event.status == 'converted_to_report')
+    event_run_count = len(runs)
+    if not events:
+        summary = '暂无历史事件沉淀，建议先刷新事件流或组合事件。'
+    else:
+        summary = (
+            f'历史库已沉淀 {len(events)} 个事件，其中高影响 {collection.high_impact_count} 个，'
+            f'{converted_count} 个已转为研报任务，事件驱动运行 {event_run_count} 次。'
+        )
+    return EventImpactReviewResponse(
+        stock_code=stock_code,
+        stock_name=stock_name,
+        total_events=len(events),
+        high_impact_count=collection.high_impact_count,
+        converted_count=converted_count,
+        event_driven_run_count=event_run_count,
+        latest_event_at=latest_event_at,
+        dominant_event_types=dominant_types,
+        summary=summary,
+        replay_items=replay_items,
+    )
+
+
 @app.get("/api/v1/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return build_health_response()
@@ -228,10 +292,27 @@ def analyze_event(
     actor, role = _actor(actor_header, role_header)
     context = {
         "event_id": event.event_id,
+        "stock_code": event.stock_code,
+        "stock_name": event.stock_name,
         "title": event.title,
         "summary": event.summary,
         "source": event.source,
         "provider": event.provider,
+        "url": event.url,
+        "published_at": event.published_at,
+        "collected_at": event.collected_at,
+        "event_type": event.event_type,
+        "sentiment": event.sentiment,
+        "impact_level": event.impact_level,
+        "impact_scope": event.impact_scope,
+        "confidence": event.confidence,
+        "reason": event.reason,
+        "channel": event.channel,
+        "retrieval_mode": event.retrieval_mode,
+        "evidence_type": event.evidence_type,
+        "related_sources": event.related_sources,
+        "status": event.status,
+        "status_note": event.status_note,
         "note": payload.note if payload else "",
     }
     run = run_manager.start_event_run(event.stock_code, event_context=context, actor=actor, role=role)
@@ -255,6 +336,13 @@ def stock_events(stock_code: str, limit: int = 6) -> StockEventTimelineResponse:
         source_count=collection.source_count,
         mode="realtime",
     )
+
+
+@app.get("/api/v1/stocks/{stock_code}/event-impact-review", response_model=EventImpactReviewResponse)
+def stock_event_impact_review(stock_code: str, limit: int = 20) -> EventImpactReviewResponse:
+    collection = collect_historical_events(stock_codes=[stock_code], limit=max(1, min(limit, 80)))
+    runs = run_manager.list_event_runs(stock_code=stock_code, limit=40)
+    return _event_impact_review_response(stock_code, collection, runs)
 
 
 @app.get("/api/v1/alerts", response_model=TrackingAlertListResponse)

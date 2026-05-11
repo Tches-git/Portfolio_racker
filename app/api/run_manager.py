@@ -35,6 +35,8 @@ class AnalysisRun:
     canceled: bool = False
     state: AnalysisState | None = None
     run_metrics: dict[str, float | int | bool] = field(default_factory=dict)
+    event_context: dict[str, object] = field(default_factory=dict)
+    event_report_summary: dict[str, object] = field(default_factory=dict)
     exports: list[dict[str, str]] = field(default_factory=list)
     events: list[dict[str, str]] = field(default_factory=list)
     audit_events: list[dict[str, str]] = field(default_factory=list)
@@ -61,7 +63,7 @@ class RunActionError(RuntimeError):
 class AnalysisRunManager:
     _LEGACY_PERSIST_PATH = 'api_runs.json'
     _DB_PATH = 'api_runs.db'
-    _SCHEMA_VERSION = 3
+    _SCHEMA_VERSION = 5
 
     def __init__(self, *, output_dir: Path, worker_count: int = 2, auto_start_workers: bool = True) -> None:
         self._output_dir = output_dir
@@ -94,23 +96,31 @@ class AnalysisRunManager:
             self._queue_condition.notify()
         return run
 
-    def start_event_run(self, stock_code: str, *, event_context: dict[str, str], actor: str = 'system', role: str = 'admin') -> AnalysisRun:
-        run = self.start_run(stock_code, actor=actor, role=role)
-        title = event_context.get('title', '') or event_context.get('event_id', '')
-        source = event_context.get('source', '') or event_context.get('provider', '')
+    def start_event_run(self, stock_code: str, *, event_context: dict[str, object], actor: str = 'system', role: str = 'admin', retry_of_run_id: str = '') -> AnalysisRun:
+        context = dict(event_context or {})
+        title = context.get('title', '') or context.get('event_id', '')
+        source = context.get('source', '') or context.get('provider', '')
         detail = f'由事件触发研报更新：{title}'
         if source:
             detail = f'{detail}（来源：{source}）'
-        with self._lock:
-            current = self._runs[run.run_id]
-            current.detail = detail
-            current.last_event = 'event_analysis_requested'
-            current.updated_at = datetime.now().isoformat()
-            current.events.append(self._event_payload(current.status, current.last_event, detail))
-            current.audit_events.append(self._audit_payload(actor, role, 'event_analyze', f"事件 {event_context.get('event_id', '')} 触发分析"))
+        run = AnalysisRun(
+            run_id=f'run_{uuid4().hex}',
+            stock_code=stock_code.strip(),
+            detail=detail,
+            last_event='event_analysis_requested',
+            retry_of_run_id=retry_of_run_id,
+            event_context=context,
+            priority=1,
+        )
+        run.events.append(self._event_payload(run.status, 'run_created', '已创建事件触发分析任务'))
+        run.events.append(self._event_payload(run.status, run.last_event, detail))
+        run.audit_events.append(self._audit_payload(actor, role, 'create_run', f'创建 {run.stock_code} 事件触发分析任务'))
+        run.audit_events.append(self._audit_payload(actor, role, 'event_analyze', f"事件 {context.get('event_id', '')} 触发分析"))
+        with self._queue_condition:
+            self._runs[run.run_id] = run
             self._save_runs()
             self._queue_condition.notify()
-            return current
+            return run
 
     def get_run(self, run_id: str) -> AnalysisRun:
         with self._lock:
@@ -171,7 +181,10 @@ class AnalysisRunManager:
         run = self.get_run(run_id)
         if run.status != 'failed':
             raise RunActionError('仅失败任务支持重试')
-        retried = self.start_run(run.stock_code, retry_of_run_id=run.run_id, actor=actor, role=role)
+        if run.event_context:
+            retried = self.start_event_run(run.stock_code, event_context=run.event_context, retry_of_run_id=run.run_id, actor=actor, role=role)
+        else:
+            retried = self.start_run(run.stock_code, retry_of_run_id=run.run_id, actor=actor, role=role)
         retried.audit_events.append(self._audit_payload(actor, role, 'retry_run', f'重试来源 {run.run_id}'))
         self._save_runs()
         return retried
@@ -254,6 +267,14 @@ class AnalysisRunManager:
             ),
         )
 
+    def list_event_runs(self, *, stock_code: str = '', limit: int = 20) -> list[AnalysisRun]:
+        with self._lock:
+            runs = [
+                run for run in self._runs.values()
+                if run.event_context and (not stock_code or run.stock_code == stock_code)
+            ]
+        return sorted(runs, key=lambda item: item.updated_at or item.created_at, reverse=True)[: max(1, limit)]
+
     @staticmethod
     def _stock_groups(runs: list[AnalysisRun]) -> list[RunStockGroupDTO]:
         grouped: dict[str, dict[str, str | int]] = {}
@@ -319,7 +340,7 @@ class AnalysisRunManager:
             return
         engine = ReportEngine(on_step=on_step)
         try:
-            state = engine.run(run.stock_code)
+            state = engine.run(run.stock_code, event_context=run.event_context or None)
             if not state.final_report:
                 self._update_run(run_id, status='failed', detail='分析未生成最终报告', last_event='run_failed', error='分析未生成最终报告')
                 return
@@ -373,6 +394,19 @@ class AnalysisRunManager:
                     'path': str(self._output_dir / filename),
                     'download_url': f'/api/v1/exports/{filename}',
                 })
+        event_summary = {}
+        if run.event_context:
+            event_summary = self._build_event_report_summary(run, state)
+            commentary_filename = self._write_event_commentary_export(run, state, event_summary)
+            if commentary_filename:
+                event_summary['event_commentary_filename'] = commentary_filename
+                event_summary['event_commentary_url'] = f'/api/v1/exports/{commentary_filename}'
+                exports.append({
+                    'kind': 'event_commentary',
+                    'filename': commentary_filename,
+                    'path': str(self._output_dir / commentary_filename),
+                    'download_url': f'/api/v1/exports/{commentary_filename}',
+                })
         with self._lock:
             current = self._runs[run_id]
             current.status = 'completed'
@@ -385,11 +419,120 @@ class AnalysisRunManager:
             current.next_retry_at = ''
             current.state = state
             current.run_metrics = dict(getattr(state, 'run_metrics', {}) or {})
+            current.event_report_summary = event_summary
             current.exports = exports
             current.latest_report_url = f'/api/v1/reports/latest/{current.stock_code}'
             current.history_url = f'/api/v1/history/{current.stock_code}'
             current.events.append(self._event_payload(current.status, current.last_event, current.detail))
             self._save_runs()
+
+    def _build_event_report_summary(self, run: AnalysisRun, state: AnalysisState) -> dict[str, object]:
+        context = dict(run.event_context or {})
+        sections = dict(getattr(state, 'sections', {}) or {})
+        title = str(context.get('title') or context.get('event_id') or '事件触发研报')
+        sentiment = str(context.get('sentiment') or 'neutral')
+        impact_level = str(context.get('impact_level') or 'low')
+        impact_scope = str(context.get('impact_scope') or 'sentiment')
+        direction = {
+            'positive': '利好验证',
+            'negative': '风险复核',
+            'uncertain': '不确定性复核',
+            'neutral': '中性跟踪',
+        }.get(sentiment, '中性跟踪')
+        priority = {
+            'high': 'P0 高优先级',
+            'medium': 'P1 持续跟踪',
+            'low': 'P2 观察',
+        }.get(impact_level, 'P2 观察')
+        rating = str(sections.get('rating') or '').strip()
+        rating_detail = str(sections.get('rating_detail') or '').strip()
+        trigger_line = str(context.get('summary') or context.get('reason') or title)
+        thesis = f'本次研报由“{title}”触发，重点复核 {impact_scope} 传导路径。'
+        if trigger_line and trigger_line != title:
+            thesis = f'{thesis} 事件摘要：{trigger_line[:160]}'
+        report_delta_hint = '研报已生成，建议结合导出正文复核投资要点、核心风险与后续跟踪指标。'
+        if rating or rating_detail:
+            report_delta_hint = f'当前研报评级 {rating or "--"}；{rating_detail or "需结合正文确认评级依据"}'
+        action = '查看事件点评导出并回到事件详情复核来源。'
+        if impact_level == 'high':
+            action = '优先复核事件点评导出，并检查研报中风险/估值锚是否已更新。'
+        related_sources = context.get('related_sources') if isinstance(context.get('related_sources'), list) else []
+        return {
+            'trigger_label': title,
+            'thesis': thesis,
+            'impact_direction': direction,
+            'impact_level': impact_level,
+            'impact_scope': impact_scope,
+            'priority': priority,
+            'review_status': 'completed',
+            'action': action,
+            'report_delta_hint': report_delta_hint,
+            'related_source_count': len(related_sources),
+            'event_commentary_filename': '',
+            'event_commentary_url': '',
+        }
+
+    def _write_event_commentary_export(self, run: AnalysisRun, state: AnalysisState, summary: dict[str, object]) -> str:
+        context = dict(run.event_context or {})
+        if not context:
+            return ''
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+        safe_event_id = ''.join(ch for ch in str(context.get('event_id') or run.run_id) if ch.isalnum() or ch in {'_', '-'})[:48] or run.run_id
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'event_commentary_{run.stock_code}_{safe_event_id}_{run.run_id[-8:]}_{timestamp}.md'
+        path = self._output_dir / filename
+        sections = dict(getattr(state, 'sections', {}) or {})
+        report_excerpt = str(getattr(state, 'final_report', '') or '').strip()[:1000]
+        source = str(context.get('source') or context.get('provider') or '未知来源')
+        published_at = str(context.get('published_at') or context.get('collected_at') or '')
+        related_sources = context.get('related_sources') if isinstance(context.get('related_sources'), list) else []
+        related_lines = []
+        for item in related_sources[:5]:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get('title') or item.get('source') or item.get('url') or '').strip()
+            url = str(item.get('url') or '').strip()
+            related_lines.append(f"- {title or '相关来源'}{f'：{url}' if url else ''}")
+        content = f"""# 事件点评：{context.get('title') or context.get('event_id') or '事件触发研报'}
+
+## 触发事件
+- 股票：{context.get('stock_name') or run.stock_code}（{run.stock_code}）
+- 事件 ID：{context.get('event_id') or ''}
+- 来源：{source}
+- 时间：{published_at or '待补充'}
+- 类型：{context.get('event_type') or 'other'}
+- 影响等级：{context.get('impact_level') or 'low'}
+- 情绪方向：{context.get('sentiment') or 'neutral'}
+- 影响范围：{context.get('impact_scope') or 'sentiment'}
+- 置信度：{context.get('confidence') or 0}
+
+## 事件摘要
+{context.get('summary') or context.get('reason') or '暂无摘要'}
+
+## 事件驱动研报摘要卡
+- 触发判断：{summary.get('thesis') or ''}
+- 影响方向：{summary.get('impact_direction') or ''}
+- 优先级：{summary.get('priority') or ''}
+- 研报变化提示：{summary.get('report_delta_hint') or ''}
+- 建议动作：{summary.get('action') or ''}
+
+## 研报关联
+- 任务 ID：{run.run_id}
+- 任务状态：completed
+- 正文导出：{sections.get('report_export') or '暂无'}
+- HTML 导出：{sections.get('report_html_export') or '暂无'}
+
+## 相关来源
+{chr(10).join(related_lines) if related_lines else '- 暂无相关来源'}
+
+## 正文摘录
+{report_excerpt or '暂无正文摘录'}
+"""
+        path.write_text(content, encoding='utf-8')
+        sections['event_commentary_export'] = filename
+        if hasattr(state, 'sections'):
+            state.sections['event_commentary_export'] = filename
+        return filename
 
     def _update_run(self, run_id: str, *, status: str | None = None, detail: str | None = None, last_event: str | None = None, error: str | None = None) -> None:
         with self._lock:
@@ -413,7 +556,7 @@ class AnalysisRunManager:
         with sqlite3.connect(self._db_path) as conn:
             conn.execute('PRAGMA journal_mode=WAL')
             conn.execute('PRAGMA foreign_keys=ON')
-            conn.execute('PRAGMA user_version = 3')
+            conn.execute(f'PRAGMA user_version = {self._SCHEMA_VERSION}')
             conn.execute(
                 '''
                 CREATE TABLE IF NOT EXISTS api_runs (
@@ -441,6 +584,8 @@ class AnalysisRunManager:
                     locked_at TEXT NOT NULL DEFAULT '',
                     next_retry_at TEXT NOT NULL DEFAULT '',
                     run_metrics_json TEXT NOT NULL DEFAULT '{}',
+                    event_context_json TEXT NOT NULL DEFAULT '{}',
+                    event_report_summary_json TEXT NOT NULL DEFAULT '{}',
                     exports_json TEXT NOT NULL,
                     events_json TEXT NOT NULL,
                     audit_events_json TEXT NOT NULL DEFAULT '[]'
@@ -468,6 +613,10 @@ class AnalysisRunManager:
                     conn.execute(ddl)
             if 'audit_events_json' not in columns:
                 conn.execute("ALTER TABLE api_runs ADD COLUMN audit_events_json TEXT NOT NULL DEFAULT '[]' ")
+            if 'event_context_json' not in columns:
+                conn.execute("ALTER TABLE api_runs ADD COLUMN event_context_json TEXT NOT NULL DEFAULT '{}' ")
+            if 'event_report_summary_json' not in columns:
+                conn.execute("ALTER TABLE api_runs ADD COLUMN event_report_summary_json TEXT NOT NULL DEFAULT '{}' ")
             conn.execute('CREATE INDEX IF NOT EXISTS idx_api_runs_status_updated ON api_runs(status, updated_at)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_api_runs_stock_updated ON api_runs(stock_code, updated_at)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_api_runs_owner ON api_runs(owner)')
@@ -483,8 +632,8 @@ class AnalysisRunManager:
                     SELECT run_id, stock_code, status, created_at, updated_at, detail, last_event,
                            error, owner, owner_role, archived, retry_of_run_id, canceled, latest_report_url,
                            history_url, recovery_status, stale_after_restart, attempts, max_attempts,
-                           priority, worker_id, locked_at, next_retry_at, run_metrics_json, exports_json,
-                           events_json, audit_events_json
+                           priority, worker_id, locked_at, next_retry_at, run_metrics_json, event_context_json,
+                           event_report_summary_json, exports_json, events_json, audit_events_json
                     FROM api_runs
                     ORDER BY updated_at DESC
                     '''
@@ -515,6 +664,8 @@ class AnalysisRunManager:
             payload.setdefault('worker_id', '')
             payload.setdefault('locked_at', '')
             payload.setdefault('next_retry_at', '')
+            payload.setdefault('event_context', {})
+            payload.setdefault('event_report_summary', {})
             if payload.get('status') in {'queued', 'running'}:
                 payload['status'] = 'failed'
                 payload['recovery_status'] = 'interrupted_after_restart'
@@ -599,8 +750,9 @@ class AnalysisRunManager:
                     run_id, stock_code, status, created_at, updated_at, detail, last_event,
                     error, owner, owner_role, archived, retry_of_run_id, canceled, latest_report_url,
                     history_url, recovery_status, stale_after_restart, attempts, max_attempts, priority,
-                    worker_id, locked_at, next_retry_at, run_metrics_json, exports_json, events_json, audit_events_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    worker_id, locked_at, next_retry_at, run_metrics_json, event_context_json, event_report_summary_json,
+                    exports_json, events_json, audit_events_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
                 [self._run_to_row(run) for run in self._runs.values()],
             )
@@ -633,6 +785,8 @@ class AnalysisRunManager:
             run.locked_at,
             run.next_retry_at,
             json.dumps(run.run_metrics, ensure_ascii=False),
+            json.dumps(run.event_context, ensure_ascii=False),
+            json.dumps(run.event_report_summary, ensure_ascii=False),
             json.dumps(run.exports, ensure_ascii=False),
             json.dumps(run.events, ensure_ascii=False),
             json.dumps(run.audit_events, ensure_ascii=False),
@@ -660,9 +814,11 @@ class AnalysisRunManager:
         locked_at = str(row[21] or '')
         next_retry_at = str(row[22] or '')
         run_metrics = dict(json.loads(str(row[23]) or '{}'))
-        exports = list(json.loads(str(row[24]) or '[]'))
-        events = list(json.loads(str(row[25]) or '[]'))
-        audit_events = list(json.loads(str(row[26]) or '[]'))
+        event_context = dict(json.loads(str(row[24]) or '{}'))
+        event_report_summary = dict(json.loads(str(row[25]) or '{}'))
+        exports = list(json.loads(str(row[26]) or '[]'))
+        events = list(json.loads(str(row[27]) or '[]'))
+        audit_events = list(json.loads(str(row[28]) or '[]'))
         if stale_after_restart and not any(item.get('event') == 'run_interrupted_after_restart' for item in events):
             events.append({
                 'timestamp': datetime.now().isoformat(),
@@ -695,6 +851,8 @@ class AnalysisRunManager:
             locked_at=locked_at if status == 'running' else '',
             next_retry_at=next_retry_at,
             run_metrics=run_metrics,
+            event_context=event_context,
+            event_report_summary=event_report_summary,
             exports=exports,
             events=events,
             audit_events=audit_events,

@@ -275,6 +275,33 @@ class WatchlistDetailResponse(BaseModel):
     summary: WatchlistSummaryDTO = Field(default_factory=WatchlistSummaryDTO)
 
 
+class EventImpactReplayItemDTO(BaseModel):
+    event_id: str = ""
+    title: str = ""
+    published_at: str = ""
+    event_type: str = ""
+    impact_level: str = ""
+    sentiment: str = ""
+    status: str = ""
+    run_id: str = ""
+    run_status: str = ""
+    event_commentary_url: str = ""
+    review_line: str = ""
+
+
+class EventImpactReviewResponse(BaseModel):
+    stock_code: str
+    stock_name: str = ""
+    total_events: int = 0
+    high_impact_count: int = 0
+    converted_count: int = 0
+    event_driven_run_count: int = 0
+    latest_event_at: str = ""
+    dominant_event_types: list[str] = Field(default_factory=list)
+    summary: str = ""
+    replay_items: list[EventImpactReplayItemDTO] = Field(default_factory=list)
+
+
 class WatchlistCreateRequest(BaseModel):
     name: str = Field(min_length=1)
     stock_codes: list[str] = Field(min_length=1)
@@ -327,6 +354,47 @@ class RunEventDTO(BaseModel):
     detail: str = ""
 
 
+class RunEventContextDTO(BaseModel):
+    event_id: str = ""
+    stock_code: str = ""
+    stock_name: str = ""
+    title: str = ""
+    summary: str = ""
+    source: str = ""
+    provider: str = ""
+    url: str = ""
+    published_at: str = ""
+    collected_at: str = ""
+    event_type: str = ""
+    sentiment: str = ""
+    impact_level: str = ""
+    impact_scope: str = ""
+    confidence: float = 0.0
+    reason: str = ""
+    channel: str = ""
+    retrieval_mode: str = ""
+    evidence_type: str = ""
+    related_sources: list[dict[str, str]] = Field(default_factory=list)
+    status: str = ""
+    status_note: str = ""
+    note: str = ""
+
+
+class RunEventReportSummaryDTO(BaseModel):
+    trigger_label: str = ""
+    thesis: str = ""
+    impact_direction: str = ""
+    impact_level: str = ""
+    impact_scope: str = ""
+    priority: str = ""
+    review_status: str = ""
+    action: str = ""
+    report_delta_hint: str = ""
+    related_source_count: int = 0
+    event_commentary_filename: str = ""
+    event_commentary_url: str = ""
+
+
 class RunActionAvailabilityDTO(BaseModel):
     can_retry: bool = False
     can_cancel: bool = False
@@ -374,6 +442,8 @@ class AnalysisRunResponse(BaseModel):
     history_url: str = ""
     exports: list[ExportArtifactDTO] = Field(default_factory=list)
     events: list[RunEventDTO] = Field(default_factory=list)
+    event_context: RunEventContextDTO = Field(default_factory=RunEventContextDTO)
+    event_report_summary: RunEventReportSummaryDTO = Field(default_factory=RunEventReportSummaryDTO)
     audit_events: list[RunAuditEventDTO] = Field(default_factory=list)
     run_metrics: RunMetricsDTO = Field(default_factory=RunMetricsDTO)
     actions: RunActionAvailabilityDTO = Field(default_factory=RunActionAvailabilityDTO)

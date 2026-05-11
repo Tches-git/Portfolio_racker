@@ -161,6 +161,7 @@ class AnalysisState:
     source_refs: list[dict[str, Any]] = field(default_factory=list)
     filings: list[dict[str, str]] = field(default_factory=list)
     announcements: list[dict[str, str]] = field(default_factory=list)
+    event_context: dict[str, Any] = field(default_factory=dict)
     runtime_input_payload: dict[str, Any] = field(default_factory=dict)
     memory_payload: dict[str, Any] = field(default_factory=dict)
     graph_payload: dict[str, Any] = field(default_factory=dict)

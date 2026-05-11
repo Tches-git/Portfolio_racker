@@ -21,6 +21,12 @@ def test_run_detail_page_exists_and_uses_run_api():
     assert 'observability.recovery_status' in page
     assert 'observability.stale_after_restart' in page
     assert 'detailStatusBar' in page
+    assert '触发事件上下文' in page
+    assert 'event_context' in page
+    assert '/events/${eventContext.event_id}' in page
+    assert '事件驱动研报摘要卡' in page
+    assert 'event_report_summary' in page
+    assert '查看事件点评导出' in page
 
 
 def test_recent_runs_and_launcher_link_to_run_detail():
@@ -37,3 +43,6 @@ def test_history_page_has_master_detail_snapshot_hint():
     assert 'selectedRecord' in history_page
     assert 'searchParams' in history_page
     assert '当前选中记录' in history_page
+    assert 'fetchEventImpactReview' in history_page
+    assert '历史事件影响复盘' in history_page
+    assert '事件点评导出' in history_page

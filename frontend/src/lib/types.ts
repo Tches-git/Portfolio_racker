@@ -138,6 +138,31 @@ export type WatchlistDetailResponse = {
   summary: WatchlistSummary
 }
 
+export type EventImpactReviewResponse = {
+  stock_code: string
+  stock_name: string
+  total_events: number
+  high_impact_count: number
+  converted_count: number
+  event_driven_run_count: number
+  latest_event_at: string
+  dominant_event_types: string[]
+  summary: string
+  replay_items: Array<{
+    event_id: string
+    title: string
+    published_at: string
+    event_type: string
+    impact_level: string
+    sentiment: string
+    status: string
+    run_id: string
+    run_status: string
+    event_commentary_url: string
+    review_line: string
+  }>
+}
+
 export type WatchlistCreateRequest = {
   name: string
   stock_codes: string[]
@@ -200,6 +225,45 @@ export type AnalysisRunResponse = {
   history_url: string
   exports: Array<{ kind: string; filename: string; path: string; download_url: string }>
   events: Array<{ timestamp: string; status: string; event: string; detail: string }>
+  event_context: {
+    event_id: string
+    stock_code: string
+    stock_name: string
+    title: string
+    summary: string
+    source: string
+    provider: string
+    url: string
+    published_at: string
+    collected_at: string
+    event_type: string
+    sentiment: string
+    impact_level: string
+    impact_scope: string
+    confidence: number
+    reason: string
+    channel: string
+    retrieval_mode: string
+    evidence_type: string
+    related_sources: Array<Record<string, string>>
+    status: string
+    status_note: string
+    note: string
+  }
+  event_report_summary: {
+    trigger_label: string
+    thesis: string
+    impact_direction: string
+    impact_level: string
+    impact_scope: string
+    priority: string
+    review_status: string
+    action: string
+    report_delta_hint: string
+    related_source_count: number
+    event_commentary_filename: string
+    event_commentary_url: string
+  }
   audit_events: Array<{ timestamp: string; actor: string; role: string; action: string; detail: string }>
   run_metrics: { duration_s: number; llm_calls: number; tool_calls: number; total_tokens: number; success: boolean }
   actions: { can_retry: boolean; can_cancel: boolean; can_assign: boolean; can_archive: boolean; can_change_owner: boolean; can_view_audit: boolean; suggested_next_action: string; product_route: string; history_route: string; exports_route: string }

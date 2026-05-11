@@ -9,6 +9,10 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
   const run = await fetchAnalysisRun(runId)
   const stockCode = stockCodeFromRun(run)
   const hasData = run.status === 'completed'
+  const eventContext = run.event_context
+  const hasEventContext = Boolean(eventContext?.event_id || eventContext?.title)
+  const eventReportSummary = run.event_report_summary
+  const hasEventReportSummary = Boolean(eventReportSummary?.trigger_label || eventReportSummary?.thesis)
 
   return (
     <main>
@@ -26,6 +30,59 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
       <RunStatusBar stockCode={stockCode} hasData={hasData} statusHint="任务中心会展示运行事件、导出物和下一步动作。" />
 
       <div className="grid">
+        {hasEventContext ? (
+          <section className="panel span-12">
+            <div className="sectionHead">
+              <div>
+                <div className="sectionEyebrow">Trigger Event</div>
+                <h2>触发事件上下文</h2>
+              </div>
+              {eventContext.event_id ? <Link className="ghostLink" href={`/events/${eventContext.event_id}`}>查看事件详情</Link> : null}
+            </div>
+            <div className="detailGrid">
+              <div className="card">
+                <div className="itemTitle">{eventContext.title || '事件触发研报'}</div>
+                <div className="itemMeta">{eventContext.stock_name || stockCode} · {eventContext.source || eventContext.provider || '本地事件源'} · {eventContext.published_at || '时间待补齐'}</div>
+                <p className="bodyText">{eventContext.summary || eventContext.reason || '该任务由事件流触发，研报会优先回应事件影响路径。'}</p>
+              </div>
+              <div className="card">
+                <div className="itemTitle">影响判断</div>
+                <div className="metricStack">
+                  <div className="metricRow"><span>事件类型</span><strong>{eventContext.event_type || '--'}</strong></div>
+                  <div className="metricRow"><span>影响等级</span><strong>{eventContext.impact_level || '--'}</strong></div>
+                  <div className="metricRow"><span>情绪方向</span><strong>{eventContext.sentiment || '--'}</strong></div>
+                  <div className="metricRow"><span>影响范围</span><strong>{eventContext.impact_scope || '--'}</strong></div>
+                  <div className="metricRow"><span>置信度</span><strong>{eventContext.confidence ? `${Math.round(eventContext.confidence * 100)}%` : '--'}</strong></div>
+                </div>
+              </div>
+              <div className="card">
+                <div className="itemTitle">研究动作</div>
+                <p className="bodyText">{eventContext.note || '研报生成时会带入标题、摘要、来源、影响等级与建议动作，用于更新投资要点、风险传导和后续跟踪指标。'}</p>
+                <div className="actionList">
+                  {eventContext.url ? <a className="downloadLink" href={eventContext.url} target="_blank" rel="noreferrer">打开原始来源</a> : null}
+                  {eventContext.event_id ? <Link className="downloadLink" href={`/events/${eventContext.event_id}`}>回到事件流</Link> : null}
+                </div>
+              </div>
+              {hasEventReportSummary ? (
+                <div className="card">
+                  <div className="itemTitle">事件驱动研报摘要卡</div>
+                  <p className="bodyText">{eventReportSummary.thesis || '事件驱动摘要等待研报完成后回流。'}</p>
+                  <div className="metricStack">
+                    <div className="metricRow"><span>影响方向</span><strong>{eventReportSummary.impact_direction || '--'}</strong></div>
+                    <div className="metricRow"><span>优先级</span><strong>{eventReportSummary.priority || '--'}</strong></div>
+                    <div className="metricRow"><span>处理状态</span><strong>{eventReportSummary.review_status || '--'}</strong></div>
+                    <div className="metricRow"><span>来源数量</span><strong>{eventReportSummary.related_source_count}</strong></div>
+                  </div>
+                  {eventReportSummary.report_delta_hint ? <div className="pathText">{eventReportSummary.report_delta_hint}</div> : null}
+                  <div className="actionList">
+                    {eventReportSummary.event_commentary_url ? <a className="downloadLink" href={`${API_BASE}${eventReportSummary.event_commentary_url}`} target="_blank" rel="noreferrer">查看事件点评导出</a> : null}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
         <section className="panel span-7">
           <div className="sectionHead">
             <div>

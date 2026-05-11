@@ -1,4 +1,4 @@
-import type { AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateResponse, DailyBriefingResponse, LatestReportResponse, MarketEvent, MarketEventListResponse, ReportDiffResponse, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDetailResponse, WatchlistListResponse, Watchlist, WorkspaceStocksResponse } from './types'
+import type { AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateResponse, DailyBriefingResponse, EventImpactReviewResponse, LatestReportResponse, MarketEvent, MarketEventListResponse, ReportDiffResponse, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDetailResponse, WatchlistListResponse, Watchlist, WorkspaceStocksResponse } from './types'
 
 export const API_BASE = typeof window === 'undefined'
   ? process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000'
@@ -67,6 +67,14 @@ export async function fetchStockEvents(stockCode: string, limit = 6): Promise<St
   const res = await fetch(`${API_BASE}/api/v1/stocks/${stockCode}/events?limit=${limit}`, { cache: 'no-store' })
   if (!res.ok) {
     throw new Error('获取股票事件时间线失败')
+  }
+  return res.json()
+}
+
+export async function fetchEventImpactReview(stockCode: string, limit = 20): Promise<EventImpactReviewResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/stocks/${stockCode}/event-impact-review?limit=${limit}`, { cache: 'no-store' })
+  if (!res.ok) {
+    throw new Error('获取历史事件影响复盘失败')
   }
   return res.json()
 }

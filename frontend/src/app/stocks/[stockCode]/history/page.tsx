@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { RunStatusBar } from '../../../../components/run-status-bar'
 import { SearchShell } from '../../../../components/search-shell'
 import { StockWorkspaceNav } from '../../../../components/stock-workspace-nav'
-import { fetchLatestReport, fetchRecentRuns, fetchReportDiff, fetchStockHistory } from '../../../../lib/api'
+import { API_BASE, fetchEventImpactReview, fetchLatestReport, fetchRecentRuns, fetchReportDiff, fetchStockHistory } from '../../../../lib/api'
 import type { AnalysisRunResponse, StockHistoryResponse } from '../../../../lib/types'
 
 function recordTone(record: StockHistoryResponse['records'][number]) {
@@ -37,6 +37,7 @@ export default async function StockHistoryPage({
   const history = await fetchStockHistory(stockCode)
   const diff = await fetchReportDiff(stockCode)
   const recentRuns = await fetchRecentRuns(8)
+  const eventReview = await fetchEventImpactReview(stockCode).catch(() => null)
   const currentRecord = selectedRecord(history?.records || [], resolvedSearchParams?.selected)
   const currentRun = latestStockRun(recentRuns.items, stockCode)
   const hasData = Boolean(latest)
@@ -158,6 +159,46 @@ export default async function StockHistoryPage({
                 {currentRun ? <Link className="downloadLink" href={`/runs/${currentRun.run_id}`}>进入任务详情</Link> : null}
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="panel span-12">
+          <div className="sectionHead">
+            <div>
+              <div className="sectionEyebrow">Event Replay</div>
+              <h2>历史事件影响复盘</h2>
+            </div>
+            <Link className="ghostLink" href={`/events?stock_codes=${stockCode}&mode=history`}>查看历史事件</Link>
+          </div>
+          <div className="dashboardGrid compactDashboard">
+            <div className="metricCard"><div className="statusLabel">历史事件</div><div className="metricCardValue">{eventReview?.total_events ?? 0}</div><div className="inlineMeta">{eventReview?.latest_event_at || '暂无时间'}</div></div>
+            <div className="metricCard"><div className="statusLabel">高影响</div><div className="metricCardValue">{eventReview?.high_impact_count ?? 0}</div><div className="inlineMeta">优先复核</div></div>
+            <div className="metricCard"><div className="statusLabel">已转研报</div><div className="metricCardValue">{eventReview?.converted_count ?? 0}</div><div className="inlineMeta">事件闭环</div></div>
+            <div className="metricCard"><div className="statusLabel">事件驱动运行</div><div className="metricCardValue">{eventReview?.event_driven_run_count ?? 0}</div><div className="inlineMeta">{eventReview?.dominant_event_types.join(' / ') || '类型待沉淀'}</div></div>
+          </div>
+          <div className="detailGrid">
+            <div className="card">
+              <div className="itemTitle">复盘摘要</div>
+              <p className="bodyText">{eventReview?.summary || '暂无历史事件沉淀。'}</p>
+              {eventReview?.dominant_event_types.length ? (
+                <div className="pillRow">
+                  {eventReview.dominant_event_types.map((item) => <span className="tag" key={item}>{item}</span>)}
+                </div>
+              ) : null}
+            </div>
+            {(eventReview?.replay_items || []).slice(0, 5).map((item) => (
+              <div className="card" key={item.event_id}>
+                <div className="itemTitle">{item.title || item.event_id}</div>
+                <div className="itemMeta">{item.published_at || '时间待补'} · {item.event_type || 'other'} · {item.impact_level || 'low'} · {item.status || 'new'}</div>
+                <p className="bodyText">{item.review_line || '暂无复盘结论。'}</p>
+                <div className="actionList">
+                  <Link className="downloadLink" href={`/events/${item.event_id}`}>事件详情</Link>
+                  {item.run_id ? <Link className="downloadLink" href={`/runs/${item.run_id}`}>关联任务</Link> : null}
+                  {item.event_commentary_url ? <a className="downloadLink" href={`${API_BASE}${item.event_commentary_url}`} target="_blank" rel="noreferrer">事件点评导出</a> : null}
+                </div>
+              </div>
+            ))}
+            {eventReview && !eventReview.replay_items.length ? <div className="emptyState">当前股票暂无可复盘事件。</div> : null}
           </div>
         </section>
 

@@ -21,12 +21,12 @@ class ReportEngine:
         self._orchestrator: AgentOrchestrator | None = None
         self._last_run_metrics: dict = {}
 
-    def run(self, stock_code: str, *, uploaded_items: list[dict] | None = None) -> AnalysisState:
+    def run(self, stock_code: str, *, uploaded_items: list[dict] | None = None, event_context: dict | None = None) -> AnalysisState:
         ensure_runtime_config(require_api_key=False)
         start = time.perf_counter()
         before_tokens = token_stats.snapshot()
         self._orchestrator = AgentOrchestrator(on_step=self.on_step, ablation_config=self.ablation_config)
-        state = self._orchestrator.run(stock_code, uploaded_items=uploaded_items)
+        state = self._orchestrator.run(stock_code, uploaded_items=uploaded_items, event_context=event_context)
         elapsed_ms = (time.perf_counter() - start) * 1000
         after_tokens = token_stats.snapshot()
         run_metrics = {

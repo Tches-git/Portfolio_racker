@@ -25,6 +25,9 @@ def test_events_page_uses_tracking_api_contract():
     assert "MarketEventListResponse" in types
     assert "high_impact_count" in types
     assert "converted_to_report" in types
+    assert "EventImpactReviewResponse" in types
+    assert "fetchEventImpactReview" in api
+    assert "/api/v1/stocks/${stockCode}/event-impact-review" in api
 
 
 def test_stock_timeline_page_and_nav_are_wired():
