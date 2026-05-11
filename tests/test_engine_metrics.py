@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import app.engine as engine_mod
-from app.models import AnalysisState
+from app.models import AblationConfig, AnalysisState
 
 
 class DummyOrchestrator:
-    def __init__(self, on_step=None):
+    def __init__(self, on_step=None, *, ablation_config=None):
         self.on_step = on_step
+        self.ablation_config = ablation_config
         self.tracer = self
         self.agent_trace = []
         self.rag_trace = []
 
-    def run(self, stock_code: str) -> AnalysisState:
+    def run(self, stock_code: str, *, uploaded_items=None) -> AnalysisState:
         state = AnalysisState(stock_code=stock_code, final_report="# report")
         state.sections["agent_steps"] = "5"
         state.sections["rag_hits"] = "2"
@@ -55,3 +56,15 @@ def test_report_engine_collects_run_metrics(monkeypatch):
     assert state.run_metrics["tool_calls"] == 7
     assert state.run_metrics["errors"] == 1
     assert engine.last_run_metrics["trace_id"] == "trace-1"
+
+
+def test_report_engine_passes_ablation_config_to_orchestrator(monkeypatch):
+    monkeypatch.setattr(engine_mod, "AgentOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(engine_mod, "token_stats", DummyTokenStats())
+
+    config = AblationConfig(label="no_rag", enable_rag=False)
+    engine = engine_mod.ReportEngine(ablation_config=config)
+    engine.run("600519")
+
+    assert engine._orchestrator is not None
+    assert engine._orchestrator.ablation_config == config

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.memory.store import AnalysisRecord
+from app.memory.store import AnalysisRecord, StockMemorySnapshot
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +46,51 @@ def _change_str(pct: float | None) -> str:
     if pct is None:
         return "N/A"
     return f"{pct:+.1f}%"
+
+
+def _shorten_text(text: str, limit: int = 80) -> str:
+    cleaned = (text or "").strip()
+    if len(cleaned) <= limit:
+        return cleaned or "暂无"
+    return f"{cleaned[: limit - 1]}…"
+
+
+def _format_confidence_signals(snapshot: StockMemorySnapshot) -> str:
+    signals = getattr(snapshot, "confidence_signals", {}) or {}
+    rating_score = float(signals.get("rating_score", 0.0) or 0.0)
+    source_count = float(signals.get("source_reference_count", 0.0) or 0.0)
+    placeholder_ratio = float(signals.get("placeholder_source_ratio", 0.0) or 0.0)
+    conflict_reason = getattr(snapshot, "conflict_reason", "") or ""
+    base = (
+        f"评分 {rating_score:.1f} | 来源 {source_count:.0f} | "
+        f"占位 {placeholder_ratio:.0%}"
+    )
+    if conflict_reason:
+        return f"{base} | 冲突原因 {conflict_reason}"
+    return base
+
+
+def _describe_list_change(current_items: list[str], previous_items: list[str], *, noun: str) -> str:
+    current = [item for item in current_items if item]
+    previous = [item for item in previous_items if item]
+    if not previous and not current:
+        return f"暂无{noun}"
+    if not previous:
+        return f"新增{noun}：{'；'.join(current[:3])}"
+    if not current:
+        return f"本次未强调{noun}"
+    current_set = set(current)
+    previous_set = set(previous)
+    added = [item for item in current if item not in previous_set]
+    removed = [item for item in previous if item not in current_set]
+    if not added and not removed:
+        return f"{noun}延续：{'；'.join(current[:3])}"
+    changes: list[str] = []
+    if added:
+        changes.append(f"新增 {'；'.join(added[:2])}")
+    if removed:
+        changes.append(f"缓释 {'；'.join(removed[:2])}")
+    return f"{noun}变化：{'；'.join(changes)}"
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +271,99 @@ def format_history_brief(records: list[AnalysisRecord]) -> str:
 
     lines.append("")
     return "\n".join(lines)
+
+
+def build_stock_memory_brief(current: StockMemorySnapshot, previous: StockMemorySnapshot | None = None) -> str:
+    lines = [f"### 🧠 长期研究脉络：{current.stock_code}"]
+    lines.append(f"- 最新评级：{current.rating or '未知'}")
+    if current.target_range:
+        lines.append(f"- 估值锚：{current.target_range}")
+    if current.key_risks:
+        lines.append(f"- 关键风险：{'；'.join(current.key_risks[:3])}")
+    if current.catalysts:
+        lines.append(f"- 催化因素：{'；'.join(current.catalysts[:3])}")
+    if current.historical_delta:
+        lines.append(f"- 本次 vs 上次：{current.historical_delta}")
+    if previous and previous.thesis and previous.thesis != current.thesis:
+        lines.append(f"- Thesis 演变：{previous.thesis[:80]} → {current.thesis[:80]}")
+    return "\n".join(lines)
+
+
+def build_run_vs_last_comparison(current: StockMemorySnapshot, previous: StockMemorySnapshot | None = None) -> dict[str, str]:
+    if previous is None:
+        return {
+            "title": "本次 vs 上次",
+            "summary": "暂无上次长期记忆，当前结果将作为后续对比基线。",
+            "thesis_change": f"初始 thesis：{_shorten_text(current.thesis, 120)}",
+            "rating_change": f"评级：{current.rating or '未知'}",
+            "valuation_change": f"估值锚：{current.target_range or current.valuation_summary or '暂无'}",
+            "risk_change": _describe_list_change(current.key_risks, [], noun="风险"),
+            "catalyst_change": _describe_list_change(current.catalysts, [], noun="催化"),
+            "confidence_change": f"当前置信信号：{_format_confidence_signals(current)}",
+            "historical_delta": current.historical_delta or "暂无历史差异摘要",
+        }
+
+    rating_change = (
+        f"{previous.rating or '未知'} → {current.rating or '未知'}"
+        if previous.rating != current.rating
+        else f"维持 {current.rating or '未知'}"
+    )
+    valuation_change = (
+        f"{previous.target_range or previous.valuation_summary or '暂无'} → "
+        f"{current.target_range or current.valuation_summary or '暂无'}"
+    )
+    confidence_change = (
+        f"{_format_confidence_signals(previous)} → {_format_confidence_signals(current)}"
+    )
+    summary_bits: list[str] = [f"评级{rating_change}"]
+    if current.historical_delta:
+        summary_bits.append(current.historical_delta)
+    summary_bits.append(_describe_list_change(current.key_risks, previous.key_risks, noun="风险"))
+    return {
+        "title": "本次 vs 上次",
+        "summary": "；".join(summary_bits),
+        "thesis_change": f"{_shorten_text(previous.thesis, 90)} → {_shorten_text(current.thesis, 90)}",
+        "rating_change": rating_change,
+        "valuation_change": valuation_change,
+        "risk_change": _describe_list_change(current.key_risks, previous.key_risks, noun="风险"),
+        "catalyst_change": _describe_list_change(current.catalysts, previous.catalysts, noun="催化"),
+        "confidence_change": confidence_change,
+        "historical_delta": current.historical_delta or "暂无历史差异摘要",
+    }
+
+
+def build_risk_evolution_summary(snapshots: list[StockMemorySnapshot]) -> list[dict[str, str]]:
+    if not snapshots:
+        return []
+    ordered = sorted(snapshots, key=lambda item: item.timestamp, reverse=True)
+    rows: list[dict[str, str]] = []
+    previous: StockMemorySnapshot | None = None
+    for item in reversed(ordered[:6]):
+        rows.append({
+            "日期": item.timestamp[:10],
+            "评级": item.rating or "未知",
+            "风险摘要": "；".join(item.key_risks[:3]) or "暂无",
+            "变化": _describe_list_change(item.key_risks, previous.key_risks if previous else [], noun="风险"),
+            "冲突": "是" if item.conflict_flag else "否",
+        })
+        previous = item
+    return rows
+
+
+def build_valuation_rating_timeline(snapshots: list[StockMemorySnapshot]) -> list[dict[str, str]]:
+    if not snapshots:
+        return []
+    ordered = sorted(snapshots, key=lambda item: item.timestamp)
+    return [
+        {
+            "日期": item.timestamp[:10],
+            "评级": item.rating or "未知",
+            "估值锚": item.target_range or "暂无",
+            "估值摘要": _shorten_text(item.valuation_summary, 80),
+            "Thesis": _shorten_text(item.thesis, 60),
+        }
+        for item in ordered[-6:]
+    ]
 
 
 def find_peer_from_history(

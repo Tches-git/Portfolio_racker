@@ -10,6 +10,8 @@ def test_reranker_cache_roundtrip(monkeypatch):
 
     def fake_chat_json(prompt, temperature, max_tokens):
         calls["count"] += 1
+        assert "<external_data>query</external_data>" in prompt
+        assert "<external_data>doc a</external_data>" in prompt
         return [{"doc_id": 2, "score": 88, "reason": "best"}]
 
     import app.llm

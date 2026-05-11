@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from app.config import PROJECT_ROOT, QUALITY_GATE_OUTPUT_DIR
 
@@ -17,6 +19,7 @@ DEFAULT_REGRESSION_OUTPUT_DIR = QUALITY_GATE_OUTPUT_DIR / "regression"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    argv_list = list(argv or [])
     parser = argparse.ArgumentParser(description="运行一键质量门禁（pytest + 黄金集回归）")
     parser.add_argument("--skip-tests", action="store_true", help="跳过 pytest")
     parser.add_argument("--skip-regression", action="store_true", help="跳过黄金集回归")
@@ -28,7 +31,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--min-avg-section-coverage", type=float, default=0.875)
     parser.add_argument("--min-anchor-coverage", type=float, default=100.0)
     parser.add_argument("--regression-output-dir", default=str(DEFAULT_REGRESSION_OUTPUT_DIR), help="黄金集回归输出目录")
-    return parser.parse_args(argv)
+    args, unknown = parser.parse_known_args(argv_list)
+    if "--pytest-args" in argv_list:
+        args.pytest_args = [*args.pytest_args, *unknown]
+        return args
+    if unknown:
+        parser.error(f"unrecognized arguments: {' '.join(unknown)}")
+    return args
 
 
 def build_gate_commands(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
@@ -81,6 +90,55 @@ def format_results(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _load_json_if_exists(path: Path) -> dict[str, Any] | None:
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _extract_gate_artifacts(results: list[dict]) -> dict[str, Any]:
+    regression_summary_path = DEFAULT_REGRESSION_OUTPUT_DIR / "regression_summary.json"
+    regression_payload = _load_json_if_exists(regression_summary_path)
+    failed_steps = [item["name"] for item in results if not item.get("passed")]
+    return {
+        "step_count": len(results),
+        "passed_steps": [item["name"] for item in results if item.get("passed")],
+        "failed_steps": failed_steps,
+        "step_categories": {item["name"]: ("verification" if item["name"] == "pytest" else "regression") for item in results},
+        "regression_summary_path": str(regression_summary_path) if regression_payload else "",
+        "regression_overall_pass": regression_payload.get("regression", {}).get("overall_pass") if regression_payload else None,
+        "regression_samples": regression_payload.get("regression", {}).get("samples") if regression_payload else None,
+        "regression_checks": regression_payload.get("regression", {}).get("checks") if regression_payload else None,
+        "regression_aggregate": regression_payload.get("aggregate") if regression_payload else None,
+        "regression_history_summary": regression_payload.get("history_summary") if regression_payload else None,
+        "regression_artifact_index": regression_payload.get("artifact_index") if regression_payload else None,
+    }
+
+
+def _build_summary_payload(summary: str, results: list[dict]) -> dict:
+    return {
+        "summary_markdown": summary,
+        "overall_pass": all(item["passed"] for item in results) if results else False,
+        "results": results,
+        "artifacts": _extract_gate_artifacts(results),
+    }
+
+
+def write_summary(summary: str, results: list[dict] | None = None) -> Path:
+    QUALITY_GATE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    summary_path = QUALITY_GATE_OUTPUT_DIR / "quality_gate_summary.md"
+    summary_path.write_text(summary, encoding="utf-8")
+    summary_json_path = QUALITY_GATE_OUTPUT_DIR / "quality_gate_summary.json"
+    summary_json_path.write_text(
+        json.dumps(_build_summary_payload(summary, results or []), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return summary_path
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     commands = build_gate_commands(args)
@@ -89,7 +147,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     results = run_gate(commands)
     summary = format_results(results)
+    summary_path = write_summary(summary, results)
     print("\n" + summary)
+    print(f"\n质量门禁汇总已保存到 {summary_path}")
     return 0 if all(item["passed"] for item in results) else 1
 
 

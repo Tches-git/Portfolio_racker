@@ -4,6 +4,14 @@ from __future__ import annotations
 import re
 
 
+def _pick_state_value(primary, fallback, default=""):
+    if primary not in (None, ""):
+        return primary
+    if fallback not in (None, ""):
+        return fallback
+    return default
+
+
 REQUIRED_SECTIONS = [
     ("投资要点", ["投资要点", "核心结论", "投资亮点"]),
     ("公司概况", ["公司概况", "公司简介", "企业概况"]),
@@ -15,11 +23,53 @@ REQUIRED_SECTIONS = [
     ("投资建议", ["投资建议", "评级", "目标价"]),
 ]
 
+_SECTION_GRAPH_RULES = {
+    "risk": {
+        "heading": "## 七、核心风险与跟踪指标",
+        "keywords": ("风险", "传导", "波动", "下行", "影响指标"),
+        "label": "风险章节",
+    },
+    "industry": {
+        "heading": "## 六、行业格局与可比公司对比",
+        "keywords": ("行业", "同行", "可比", "竞争", "格局"),
+        "label": "行业章节",
+    },
+    "valuation": {
+        "heading": "## 五、估值分析",
+        "keywords": ("估值", "指标", "利润", "收入", "催化"),
+        "label": "估值章节",
+    },
+}
+
+
+def collect_section_graph_feedback(report: str, state) -> dict[str, dict[str, str | bool]]:
+    feedback: dict[str, dict[str, str | bool]] = {}
+    if state is None:
+        return feedback
+    graph_payload = getattr(state, "graph_payload", {}) or {}
+    section_graph_context_map = graph_payload.get("section_graph_context_map", {}) if isinstance(graph_payload.get("section_graph_context_map", {}), dict) else {}
+    for section_id, meta in _SECTION_GRAPH_RULES.items():
+        graph_context = str(_pick_state_value(section_graph_context_map.get(section_id), state.sections.get(f"section_graph_context_{section_id}", ""), "") or "")
+        injected = bool(graph_context and "未命中" not in graph_context)
+        section_body = _extract_section_body(report, meta["heading"])
+        absorbed = bool(section_body and any(keyword in section_body for keyword in meta["keywords"]))
+        feedback[section_id] = {
+            "label": meta["label"],
+            "injected": injected,
+            "absorbed": absorbed,
+            "section_body": section_body,
+        }
+    return feedback
+
 
 def check_report_consistency(report: str, state) -> list[str]:
     issues: list[str] = []
     if state is None:
         return issues
+
+    runtime_payload = getattr(state, "runtime_input_payload", {}) or {}
+    memory_payload = getattr(state, "memory_payload", {}) or {}
+    graph_payload = getattr(state, "graph_payload", {}) or {}
 
     rating = state.sections.get("rating", "")
     if rating and rating not in report:
@@ -47,6 +97,64 @@ def check_report_consistency(report: str, state) -> list[str]:
     if state.peers and ("同行" not in report and "可比" not in report):
         issues.append("存在同行数据，但报告正文未明显体现同行/可比分析")
 
+    graph_hit_count = int(float(_pick_state_value(graph_payload.get("graph_hit_count"), state.sections.get("graph_hit_count", "0"), 0) or 0))
+    graph_query_focus = str(_pick_state_value(graph_payload.get("graph_query_focus"), state.sections.get("graph_query_focus", "通用关系"), "通用关系") or "通用关系")
+    graph_focus_summary = str(_pick_state_value(graph_payload.get("graph_focus_summary"), state.sections.get("graph_focus_summary", ""), "") or "")
+    section_graph_summary = str(_pick_state_value(graph_payload.get("section_graph_summary"), state.sections.get("section_graph_summary", ""), "") or "")
+    focus_keywords = {
+        "风险传导": ("风险", "传导"),
+        "催化因素": ("催化", "修复", "改善"),
+        "同行对比": ("同行", "可比", "竞争"),
+        "行业归属": ("行业", "赛道"),
+        "指标影响": ("指标", "利润", "收入", "估值"),
+    }
+    focus_matched = any(keyword in report for keyword in focus_keywords.get(graph_query_focus, ()))
+    multi_focus_matched = any(focus in report for focus in ("风险传导", "催化因素", "同行对比", "行业归属", "指标影响"))
+    if graph_hit_count > 0 and all(keyword not in report for keyword in ("关系", "传导", "催化", "同行", "行业")) and not focus_matched and not multi_focus_matched:
+        issue = f"存在关系图摘要，但报告正文未明显吸收关系信息（当前图查询焦点：{graph_query_focus}）"
+        if graph_focus_summary:
+            issue += f"；多焦点摘要：{graph_focus_summary}"
+        if section_graph_summary:
+            issue += f"；章节定向摘要：{section_graph_summary}"
+        injected_sections = []
+        section_graph_context_map = graph_payload.get("section_graph_context_map", {}) if isinstance(graph_payload.get("section_graph_context_map", {}), dict) else {}
+        if _pick_state_value(section_graph_context_map.get("risk"), state.sections.get("section_graph_context_risk", ""), ""):
+            injected_sections.append("风险")
+        if _pick_state_value(section_graph_context_map.get("industry"), state.sections.get("section_graph_context_industry", ""), ""):
+            injected_sections.append("行业")
+        if _pick_state_value(section_graph_context_map.get("valuation"), state.sections.get("section_graph_context_valuation", ""), ""):
+            injected_sections.append("估值")
+        if injected_sections:
+            issue += f"；已注入章节Graph={','.join(injected_sections)}"
+        issues.append(issue)
+
+    memory_hit_count = int(float(_pick_state_value(memory_payload.get("memory_hit_count"), state.sections.get("memory_hit_count", "0"), 0) or 0))
+    if memory_hit_count > 0:
+        memory_checks = {
+            "评级变化": _pick_state_value(memory_payload.get("comparison_rating"), state.sections.get("memory_comparison_rating", ""), ""),
+            "风险演化": _pick_state_value(memory_payload.get("comparison_risk"), state.sections.get("memory_comparison_risk", ""), ""),
+            "估值演变": _pick_state_value(memory_payload.get("comparison_valuation"), state.sections.get("memory_comparison_valuation", ""), ""),
+        }
+        matched_memory = 0
+        history_cues = ("上次", "本次", "历史", "变化", "演变", "vs")
+        report_has_history_cue = any(cue in report for cue in history_cues)
+        for label, source_text in memory_checks.items():
+            if not source_text:
+                continue
+            tokens = [token.strip() for token in re.split(r"[→；：:，,\s]+", source_text) if token.strip() and len(token.strip()) >= 2]
+            if report_has_history_cue and (label in report or any(token in report for token in tokens[:4])):
+                matched_memory += 1
+        if matched_memory == 0:
+            issues.append("存在长期记忆，但报告正文未显式覆盖评级变化、风险演化或估值演变")
+
+    section_graph_feedback = collect_section_graph_feedback(report, state)
+    for section_id, meta in _SECTION_GRAPH_RULES.items():
+        section_feedback = section_graph_feedback.get(section_id, {})
+        if not section_feedback.get("injected"):
+            continue
+        if not section_feedback.get("absorbed"):
+            issues.append(f"{meta['label']}存在章节级 Graph 注入，但正文未明显吸收对应关系线索")
+
     return issues
 
 
@@ -60,6 +168,11 @@ def collect_rule_metrics(report: str) -> dict:
         else:
             missing_sections.append(section_name)
     numbers = re.findall(r"\d+\.?\d*[%亿元倍]", report)
+    section_graph_absorption_count = 0
+    for meta in _SECTION_GRAPH_RULES.values():
+        section_body = _extract_section_body(report, meta["heading"])
+        if section_body and any(keyword in section_body for keyword in meta["keywords"]):
+            section_graph_absorption_count += 1
     return {
         "covered_sections": covered,
         "section_coverage": covered / len(REQUIRED_SECTIONS),
@@ -71,7 +184,16 @@ def collect_rule_metrics(report: str) -> dict:
         "risk_transmission_count": len(re.findall(r"传导路径[：:]", report)),
         "investment_anchor_present": any(keyword in report for keyword in ["目标价", "估值区间", "估值锚", "合理估值区间"]),
         "data_gap_disclosure_count": len(re.findall(r"数据降级说明[：:]|数据降级说明", report)),
+        "section_graph_absorption_count": section_graph_absorption_count,
     }
+
+
+def _extract_section_body(report: str, heading: str) -> str:
+    pattern = rf"{re.escape(heading)}\s*(.*?)(?=\n## |\Z)"
+    match = re.search(pattern, report, flags=re.S)
+    if not match:
+        return ""
+    return match.group(1).strip()
 
 
 def build_judge_prompt(report: str) -> str:
@@ -120,6 +242,11 @@ def format_eval_markdown(result) -> str:
         f"- 风险传导路径条目: **{result.risk_transmission_count}**",
         f"- 投资建议估值锚: {'✅' if result.investment_anchor_present else '❌'}",
         f"- 数据降级披露次数: **{result.data_gap_disclosure_count}**",
+        f"- 来源引用条目: **{result.source_reference_count}**",
+        f"- 来源覆盖率: **{result.source_provenance_coverage:.0%}**",
+        f"- 文档解析成功率: **{result.document_parse_success_rate:.0%}**",
+        f"- 表格抽取成功率: **{result.table_extraction_success_rate:.0%}**",
+        f"- 在线工具成功率: **{result.live_tool_success_rate:.0%}**",
         f"- 报告后处理修补次数: **{result.postprocess_fix_count}**",
         "",
         "## LLM 评分 (1-5)",

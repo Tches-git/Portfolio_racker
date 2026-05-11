@@ -101,19 +101,30 @@ class Tracer:
             spans_snapshot = list(self.spans)
         _collect(spans_snapshot)
 
+        phase_spans = stats["phase"]
         tool_calls = stats["tool"]
         llm_calls = stats["llm"]
+        failed_phases = [s for s in phase_spans if s.status == "error"]
 
         return {
             "trace_id": self.trace_id,
             "total_duration_ms": round(total_time, 1),
             "total_duration_s": round(total_time / 1000, 1),
-            "phases": len(stats["phase"]),
+            "phases": len(phase_spans),
+            "phase_total_ms": round(sum(s.duration_ms for s in phase_spans), 1),
+            "phase_breakdown": [
+                {"name": s.name, "status": s.status, "ms": round(s.duration_ms, 1)}
+                for s in phase_spans
+            ],
+            "failed_phases": [
+                {"name": s.name, "status": s.status, "ms": round(s.duration_ms, 1)}
+                for s in failed_phases
+            ],
             "tool_calls": len(tool_calls),
             "tool_total_ms": round(sum(s.duration_ms for s in tool_calls), 1),
             "llm_calls": len(llm_calls),
             "llm_total_ms": round(sum(s.duration_ms for s in llm_calls), 1),
-            "errors": sum(1 for s in tool_calls + llm_calls if s.status == "error"),
+            "errors": sum(1 for s in phase_spans + tool_calls + llm_calls if s.status == "error"),
             # 最慢的 3 个操作
             "slowest": [
                 {"name": s.name, "type": s.span_type, "ms": round(s.duration_ms, 1)}

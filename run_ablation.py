@@ -4,14 +4,18 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict, dataclass
 from datetime import datetime
+from pathlib import Path
 from statistics import mean
+from typing import Any
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from app.config import ABLATION_OUTPUT_DIR
+from app.models import AblationConfig
 
 DEFAULT_STOCKS = ["600519", "000858", "300750"]
 DEFAULT_EXPERIMENTS = ["baseline", "no_reflection", "no_rag"]
@@ -19,81 +23,59 @@ OUTPUT_DIR = ABLATION_OUTPUT_DIR
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def run_baseline(stock_code: str):
+@dataclass(frozen=True)
+class AblationExperiment:
+    label: str
+    banner: str
+    config: AblationConfig
+
+
+def _build_experiment(label: str) -> AblationExperiment:
+    if label == "no_reflection":
+        return AblationExperiment(
+            label=label,
+            banner="-Reflection（移除反思阶段）",
+            config=AblationConfig(label=label, enable_reflection=False),
+        )
+    if label == "no_rag":
+        return AblationExperiment(
+            label=label,
+            banner="-RAG（移除知识库检索）",
+            config=AblationConfig(label=label, enable_rag=False),
+        )
+    return AblationExperiment(
+        label=label,
+        banner="Baseline（完整系统）",
+        config=AblationConfig(label=label),
+    )
+
+
+def _build_ablation_config(label: str) -> AblationConfig:
+    return _build_experiment(label).config
+
+
+def _run_experiment(stock_code: str, *, label: str, banner: str | None = None):
+    experiment = _build_experiment(label)
     print("=" * 60)
-    print(f"Baseline（完整系统） | 股票: {stock_code}")
+    print(f"{banner or experiment.banner} | 股票: {stock_code}")
     print("=" * 60)
     from app.engine import ReportEngine
 
-    engine = ReportEngine()
+    engine = ReportEngine(ablation_config=experiment.config)
     state = engine.run(stock_code)
     return state
 
 
+def run_baseline(stock_code: str):
+    return _run_experiment(stock_code, label="baseline")
+
+
 def run_no_reflection(stock_code: str):
-    print("=" * 60)
-    print(f"-Reflection（移除反思阶段） | 股票: {stock_code}")
-    print("=" * 60)
-    import app.agent.react_agent as ra
-
-    original_run = ra.ReActAgent.run
-
-    def patched_run(self, task, state):
-        from app.agent.tools import _make_tools, format_tools_prompt
-
-        tools = _make_tools(state)
-        tools_prompt = format_tools_prompt(tools)
-        self.on_step("planning", "正在制定研究计划...", {"role": self.role})
-        plan = self._plan(task, tools_prompt)
-        state.plan = plan
-        plan_text = "\n".join(
-            f"- [{p.step_id}] {p.objective} → {p.preferred_tool}" for p in plan
-        )
-        self.on_step(
-            "plan_ready",
-            f"研究计划: {len(plan)} 步",
-            {"plan": [{"id": p.step_id, "obj": p.objective} for p in plan]},
-        )
-        steps, answer = self._act(task, tools, tools_prompt, plan_text, state)
-        self.on_step("reflection_done", "反思已跳过（消融实验）", {"reflection": {}})
-        return ra.AgentResult(answer=answer, steps=steps, total_steps=len(steps), plan=plan, reflection="")
-
-    ra.ReActAgent.run = patched_run
-    try:
-        from app.engine import ReportEngine
-
-        engine = ReportEngine()
-        state = engine.run(stock_code)
-    finally:
-        ra.ReActAgent.run = original_run
-    return state
+    return _run_experiment(stock_code, label="no_reflection")
 
 
 def run_no_rag(stock_code: str):
-    print("=" * 60)
-    print(f"-RAG（移除知识库检索） | 股票: {stock_code}")
-    print("=" * 60)
-    import app.agent.orchestrator as orch
-
-    original_write = orch.AgentOrchestrator._write_report_with_rag
-
-    def patched_write(self, state, kb, prev_record=None):
-        original_query = kb.query
-        kb.query = lambda *a, **kw: []
-        try:
-            return original_write(self, state, kb, prev_record)
-        finally:
-            kb.query = original_query
-
-    orch.AgentOrchestrator._write_report_with_rag = patched_write
-    try:
-        from app.engine import ReportEngine
-
-        engine = ReportEngine()
-        state = engine.run(stock_code)
-    finally:
-        orch.AgentOrchestrator._write_report_with_rag = original_write
-    return state
+    return _run_experiment(stock_code, label="no_rag")
 
 
 RUNNERS = {
@@ -103,13 +85,59 @@ RUNNERS = {
 }
 
 
+def _build_artifact_index(output_dir: Path, rows: list[dict]) -> dict[str, Any]:
+    stocks: dict[str, dict[str, dict[str, str]]] = {}
+    for row in rows:
+        stock_code = row.get("stock_code", "")
+        label = row.get("label", "")
+        if not stock_code or not label:
+            continue
+        stocks.setdefault(stock_code, {})[label] = {
+            "report_path": str(output_dir / stock_code / f"report_{label}.md"),
+            "eval_markdown_path": str(output_dir / stock_code / f"eval_{label}.md"),
+            "eval_json_path": str(output_dir / stock_code / f"eval_{label}.json"),
+        }
+    return {"stocks": stocks, "summary_markdown_path": str(output_dir / "ablation_summary.md"), "summary_json_path": str(output_dir / "ablation_summary.json")}
+
+
+def _build_history_summary(current: dict[str, dict], previous: dict[str, dict] | None) -> dict[str, dict[str, float | None]]:
+    if not previous:
+        return {}
+    history: dict[str, dict[str, float | None]] = {}
+    for label, item in current.items():
+        previous_item = previous.get(label, {}) if isinstance(previous.get(label, {}), dict) else {}
+        history[label] = {
+            "previous_avg_score": previous_item.get("avg_score"),
+            "score_delta": round(item.get("avg_score", 0.0) - previous_item.get("avg_score", 0.0), 2) if "avg_score" in previous_item else None,
+            "previous_avg_duration_s": previous_item.get("avg_duration_s"),
+            "duration_delta_s": round(item.get("avg_duration_s", 0.0) - previous_item.get("avg_duration_s", 0.0), 2) if "avg_duration_s" in previous_item else None,
+            "previous_avg_tokens": previous_item.get("avg_tokens"),
+            "tokens_delta": round(item.get("avg_tokens", 0.0) - previous_item.get("avg_tokens", 0.0), 1) if "avg_tokens" in previous_item else None,
+        }
+    return history
+
+
+def _load_previous_summary(output_dir: Path, summary_name: str) -> dict[str, Any] | None:
+    summary_path = output_dir / summary_name
+    if not summary_path.exists() or not summary_path.is_file():
+        return None
+    try:
+        return json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def evaluate_state(state, label: str, stock_code: str, *, use_llm_judge: bool, output_dir: Path) -> dict | None:
     from app.evals.report_eval import evaluate_report, evaluate_report_with_metrics, format_eval_report
 
+    experiment = _build_experiment(label)
+    ablation_config = asdict(experiment.config)
     if not state.final_report:
         print(f"  ❌ {label}/{stock_code}: 研报生成失败")
         return {
             "label": label,
+            "experiment_banner": experiment.banner,
+            "ablation_config": ablation_config,
             "stock_code": stock_code,
             "success": False,
             "overall_score": 0.0,
@@ -137,6 +165,8 @@ def evaluate_state(state, label: str, stock_code: str, *, use_llm_judge: bool, o
     run_metrics = metrics_payload.get("run_metrics", {})
     row = {
         "label": label,
+        "experiment_banner": experiment.banner,
+        "ablation_config": ablation_config,
         "stock_code": stock_code,
         "success": True,
         "overall_score": eval_result.overall_score,
@@ -173,7 +203,14 @@ def evaluate_state(state, label: str, stock_code: str, *, use_llm_judge: bool, o
     return row
 
 
-def summarize_results(rows: list[dict], *, use_llm_judge: bool) -> tuple[str, dict]:
+def summarize_results(rows: list[dict], *, use_llm_judge: bool, previous_aggregate: dict[str, dict] | None = None) -> tuple[str, dict]:
+    experiment_contracts = {
+        label: {
+            "banner": _build_experiment(label).banner,
+            "ablation_config": asdict(_build_experiment(label).config),
+        }
+        for label in sorted({row["label"] for row in rows})
+    }
     summary_lines = [
         "# 消融实验结果",
         "",
@@ -248,7 +285,21 @@ def summarize_results(rows: list[dict], *, use_llm_judge: bool) -> tuple[str, di
                 f"RAG命中 {item['avg_rag_hits'] - baseline['avg_rag_hits']:+.1f}"
             )
 
-    return "\n".join(summary_lines), aggregate
+    history_summary = _build_history_summary(aggregate, previous_aggregate)
+    if history_summary:
+        summary_lines.extend(["", "## 相对上次汇总的变化", ""])
+        for label, item in history_summary.items():
+            if item["score_delta"] is None:
+                continue
+            summary_lines.append(
+                f"- **{label}**：评分 {item['score_delta']:+.2f}，耗时 {item['duration_delta_s']:+.2f}s，Tokens {item['tokens_delta']:+.1f}"
+            )
+
+    return "\n".join(summary_lines), {
+        "experiments": aggregate,
+        "experiment_contracts": experiment_contracts,
+        "history_summary": history_summary,
+    }
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -265,6 +316,9 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    previous_summary = _load_previous_summary(output_dir, "ablation_summary.json") or {}
+    previous_aggregate = previous_summary.get("aggregate") if isinstance(previous_summary.get("aggregate"), dict) else None
+
     rows: list[dict] = []
     for stock_code in args.stocks:
         for label in args.experiments:
@@ -279,12 +333,13 @@ def main(argv: list[str] | None = None) -> int:
             if row:
                 rows.append(row)
 
-    summary_md, aggregate = summarize_results(rows, use_llm_judge=args.llm_judge)
+    summary_md, aggregate = summarize_results(rows, use_llm_judge=args.llm_judge, previous_aggregate=previous_aggregate)
+    artifact_index = _build_artifact_index(output_dir, rows)
     summary_path = output_dir / "ablation_summary.md"
     summary_json_path = output_dir / "ablation_summary.json"
     summary_path.write_text(summary_md, encoding="utf-8")
     summary_json_path.write_text(
-        json.dumps({"rows": rows, "aggregate": aggregate}, ensure_ascii=False, indent=2),
+        json.dumps({"rows": rows, "aggregate": aggregate["experiments"], "experiment_contracts": aggregate["experiment_contracts"], "history_summary": aggregate["history_summary"], "artifact_index": artifact_index}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 

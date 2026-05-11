@@ -15,3 +15,5 @@ build/
 .idea/
 .DS_Store
 Thumbs.db
+frontend/node_modules/
+frontend/.next/

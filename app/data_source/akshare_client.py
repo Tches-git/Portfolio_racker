@@ -314,6 +314,7 @@ def get_stock_profile(code: str) -> StockProfile:
         pe_ratio=pe,
         pb_ratio=pb,
         total_shares=total_shares,
+        current_price=current_price,
         listing_date="",
     )
     _write_cache(
@@ -326,6 +327,7 @@ def get_stock_profile(code: str) -> StockProfile:
             "pe_ratio": pe,
             "pb_ratio": pb,
             "total_shares": total_shares,
+            "current_price": current_price,
             "listing_date": "",
         },
     )

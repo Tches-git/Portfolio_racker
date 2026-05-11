@@ -1,0 +1,111 @@
+"""轻量事件历史存储。"""
+from __future__ import annotations
+
+import json
+from dataclasses import asdict
+from pathlib import Path
+
+from app.config import OUTPUT_DIR
+from app.tracking.models import MarketEvent
+
+
+def save_events(events: list[MarketEvent], *, output_dir: Path = OUTPUT_DIR) -> None:
+    """按 event_id 去重保存事件历史。"""
+    if not events:
+        return
+    current = {event.event_id: event for event in load_events(output_dir=output_dir)}
+    for event in events:
+        if event.event_id:
+            current[event.event_id] = event
+    ordered = sorted(current.values(), key=lambda item: item.published_at or item.collected_at, reverse=True)
+    _save(ordered, output_dir=output_dir)
+
+
+def load_events(*, output_dir: Path = OUTPUT_DIR) -> list[MarketEvent]:
+    path = _history_path(output_dir)
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    items = payload.get("items", payload if isinstance(payload, list) else [])
+    if not isinstance(items, list):
+        return []
+    return [_event_from_dict(item) for item in items if isinstance(item, dict)]
+
+
+def query_events(
+    *,
+    stock_code: str = "",
+    provider: str = "",
+    event_type: str = "",
+    impact_level: str = "",
+    start: str = "",
+    end: str = "",
+    limit: int = 100,
+    output_dir: Path = OUTPUT_DIR,
+) -> list[MarketEvent]:
+    events = load_events(output_dir=output_dir)
+    filtered = []
+    for event in events:
+        event_time = event.published_at or event.collected_at
+        if stock_code and event.stock_code != stock_code:
+            continue
+        if provider and provider not in {event.provider, event.source}:
+            continue
+        if event_type and event.event_type != event_type:
+            continue
+        if impact_level and event.impact_level != impact_level:
+            continue
+        if start and event_time and event_time < start:
+            continue
+        if end and event_time and event_time > end:
+            continue
+        filtered.append(event)
+    return filtered[: max(1, limit)]
+
+
+def get_event(event_id: str, *, output_dir: Path = OUTPUT_DIR) -> MarketEvent | None:
+    for event in load_events(output_dir=output_dir):
+        if event.event_id == event_id:
+            return event
+    return None
+
+
+def _history_path(output_dir: Path) -> Path:
+    return output_dir / "tracking_events.json"
+
+
+def _save(events: list[MarketEvent], *, output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    payload = {"items": [asdict(event) for event in events]}
+    _history_path(output_dir).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _event_from_dict(item: dict) -> MarketEvent:
+    return MarketEvent(
+        event_id=str(item.get("event_id", "")),
+        stock_code=str(item.get("stock_code", "")),
+        stock_name=str(item.get("stock_name", "")),
+        title=str(item.get("title", "")),
+        summary=str(item.get("summary", "")),
+        source=str(item.get("source", "")),
+        provider=str(item.get("provider", "")),
+        url=str(item.get("url", "")),
+        published_at=str(item.get("published_at", "")),
+        collected_at=str(item.get("collected_at", "")),
+        event_type=str(item.get("event_type", "other")),
+        sentiment=str(item.get("sentiment", "neutral")),
+        impact_level=str(item.get("impact_level", "low")),
+        impact_scope=str(item.get("impact_scope", "sentiment")),
+        confidence=float(item.get("confidence", 0.5) or 0.5),
+        reason=str(item.get("reason", "")),
+        channel=str(item.get("channel", "")),
+        retrieval_mode=str(item.get("retrieval_mode", "")),
+        evidence_type=str(item.get("evidence_type", "")),
+        is_placeholder=bool(item.get("is_placeholder", False)),
+        related_sources=list(item.get("related_sources", []) or []),
+        is_duplicate=bool(item.get("is_duplicate", False)),
+        parent_event_id=str(item.get("parent_event_id", "")),
+    )

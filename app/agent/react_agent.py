@@ -8,7 +8,7 @@ from typing import Callable
 
 from app.config import MAX_AGENT_STEPS, MAX_OBSERVATION_TOKENS, MAX_TOOL_HISTORY_MESSAGES
 from app.llm import chat, chat_json, chat_with_tools
-from app.models import AnalysisState, PlanItem
+from app.models import AblationConfig, AnalysisState, PlanItem
 from app.agent.tools import (
     Tool, _make_tools, format_tools_prompt,
     execute_tool, tools_to_function_specs,
@@ -156,10 +156,11 @@ class ReActAgent:
     """三阶段推理 Agent：Planning → Acting → Reflection"""
 
     def __init__(self, role: str = "research", max_steps: int = MAX_AGENT_STEPS,
-                 on_step: StepCallback | None = None):
+                 on_step: StepCallback | None = None, ablation_config: AblationConfig | None = None):
         self.role = role
         self.max_steps = max_steps
         self.on_step = on_step or (lambda *_: None)
+        self.ablation_config = ablation_config or AblationConfig()
 
     def run(self, task: str, state: AnalysisState) -> AgentResult:
         tools = _make_tools(state)
@@ -173,6 +174,11 @@ class ReActAgent:
         self.on_step("plan_ready", f"研究计划: {len(plan)} 步", {"plan": [{"id": p.step_id, "obj": p.objective} for p in plan]})
 
         steps, answer = self._act(task, tools, tools_prompt, plan_text, state)
+
+        if not self.ablation_config.enable_reflection:
+            state.reflection = ""
+            self.on_step("reflection_done", "反思已跳过（消融实验）", {"reflection": {}})
+            return AgentResult(answer=answer, steps=steps, total_steps=len(steps), plan=plan, reflection="")
 
         self.on_step("reflecting", "正在反思研究质量...", {"role": self.role})
         reflection = self._reflect(task, plan_text, steps, answer, state)

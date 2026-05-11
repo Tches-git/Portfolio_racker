@@ -1,6 +1,5 @@
 numpy>=1.26
 pypdf>=4.2.0
-streamlit>=1.37.0
 faiss-cpu>=1.8.0
 zhipuai>=2.1.0
 python-dotenv>=1.0.0
@@ -8,3 +7,6 @@ akshare>=1.14.0
 pandas>=2.0.0
 requests>=2.31.0
 pytest>=8.0.0
+reportlab>=4.2.0
+fastapi>=0.136.1
+uvicorn>=0.30.0

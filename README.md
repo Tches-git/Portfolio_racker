@@ -1,17 +1,19 @@
 # 📊 金融研报智能分析系统
 
-> 基于 **ReAct Agent + RAG** 的 A 股深度研报自动生成系统，支持 CLI、Web 工作台、质量评测、消融实验、黄金集回归与质量门禁。
+> 基于 **ReAct Agent + RAG** 的 A 股金融研报与消息追踪平台，支持 CLI、FastAPI + Next.js 产品前端、事件流、组合跟踪、预警中心、质量评测、消融实验、黄金集回归与质量门禁。
 
 ---
 
 ## 项目亮点
 
 - **完整分析链路**：输入股票代码后，自动完成数据采集、研究推理、RAG 增强写作与报告生成
-- **11 个金融分析工具**：覆盖杜邦分析、DCF + 蒙特卡洛估值、可比公司估值、趋势分析、风险识别等核心环节
+- **Phase 1 已接入可选多模态/在线来源升级链路**：支持附加 PDF / 图片 / 文本材料上传、CNInfo 公告/披露抓取 + 回退新闻来源、行情/来源证据展示，且默认股票代码主路径保持不变
+- **11+ 个金融分析工具**：覆盖杜邦分析、DCF + 蒙特卡洛估值、可比公司估值、趋势分析、风险识别及 Phase 1 在线来源工具
 - **质量与可信度导向**：内置规则评分、LLM-as-Judge、事实一致性检查、风险证据/传导、估值锚与数据降级披露指标
-- **双入口体验**：既可通过 `main.py` 统一 CLI 使用，也可通过 Streamlit Web 工作台进行交互式浏览
+- **双入口体验**：既可通过 `main.py` 统一 CLI 使用，也可通过 FastAPI + Next.js 产品前端进行交互式浏览
+- **金融消息追踪平台能力**：已覆盖事件追踪、事件详情、股票事件时间线、组合跟踪、预警中心、每日简报和事件触发研报更新入口；旧 Python Web 界面已移除
 - **工程化能力完整**：包含消融实验、固定黄金集回归、质量门禁、最小 GitHub Actions CI 样板
-- **测试覆盖完善**：当前包含 **29 个测试文件 / 161 个测试用例**
+- **测试覆盖完善**：覆盖研报生成、API、导出、事件追踪、组合跟踪、预警简报和前端契约
 
 ---
 
@@ -22,6 +24,7 @@
 1. **分析过程是否像真实研究流程**：先规划，再执行工具研究，再反思补充
 2. **结论是否有数据和估值支撑**：不仅输出观点，还输出估值、风险、同行对比和财务拆解
 3. **结果是否可评估、可回归、可持续优化**：不是只看一篇研报，而是能看评分、回归、消融和质量门禁
+4. **研究是否能持续追踪**：把公告、披露、行情、研报观点和风险舆情沉淀成事件历史，并在必要时触发研报更新
 
 ---
 
@@ -75,11 +78,20 @@ python main.py 600519
 # 显式 analyze 子命令
 python main.py analyze 000858 --eval
 
-# 启动 Web 工作台
-python main.py web
+# Phase 1：附加 PDF / 图片 / 文本材料（可重复 --doc）
+python main.py analyze 600519 --doc docs/sample.txt --doc data/knowledge_base/example.pdf
+
+# 启动产品前端 API
+python main.py api
+
+# 启动 Next.js 前端（另开终端）
+cd frontend
+npm run dev
 ```
 
 ### 4. 常用扩展命令
+
+> `--doc` 为可选增强输入；不传时仍走原有单股票分析主链路。
 
 ```bash
 # 重建知识库
@@ -129,14 +141,14 @@ Planning（规划） → Acting（执行） → Reflecting（反思）
 | **金融工具链** | 11 个专业金融分析工具，覆盖数据获取到估值建模 |
 | **评测模块** | 自动化研报质量评分与诊断 |
 | **Memory** | 历史分析结果沉淀与回看、对比 |
-| **Web 工作台** | 多级页面浏览、进度反馈、质量仪表板与历史入口 |
+| **产品前端** | Next.js 工作区、事件追踪、组合跟踪、预警/简报、运行中心与任务详情入口 |
 
 ### 技术栈
 
 | 技术 | 用途 |
 |------|------|
 | **Python 3.10+** | 核心开发语言 |
-| **Streamlit** | Web 交互界面 |
+| **FastAPI / Next.js** | 产品前端 API 与浏览器工作区 |
 | **智谱 GLM-5.1 / OpenAI Compatible** | 大语言模型推理与生成 |
 | **FAISS** | 向量相似度检索 |
 | **akshare** | A 股金融数据获取 |
@@ -147,16 +159,16 @@ Planning（规划） → Acting（执行） → Reflecting（反思）
 ## 仓库结构
 
 ```text
-├── main.py                 # 统一 CLI 入口（analyze / web / ablation / regression / quality-gate / human-eval）
-├── web_app.py              # Streamlit Web 界面
+├── main.py                 # 统一 CLI 入口（analyze / api / ablation / regression / quality-gate / human-eval）
 ├── run_ablation.py         # 消融评测兼容脚本
 ├── run_regression.py       # 黄金集回归兼容脚本
 ├── run_quality_gate.py     # 一键质量门禁兼容脚本
 ├── run_human_eval_pack.py  # 人工评审包生成兼容脚本
 ├── docs/                   # 补充文档（技术说明 / 仓库整理 / 项目展示材料）
 ├── app/                    # 核心源码
+├── frontend/               # Next.js 产品前端
 ├── data/                   # 知识库、行业映射、评测种子数据等
-├── tests/                  # 29 个测试文件 / 161 个测试用例
+├── tests/                  # 自动化测试与前端契约测试
 └── output/                 # 本地产出目录（建议不提交）
 ```
 
@@ -170,7 +182,7 @@ Planning（规划） → Acting（执行） → Reflecting（反思）
 
 ```bash
 python main.py analyze 600519 --eval
-python main.py web
+python main.py api
 python main.py ablation
 python main.py regression
 python main.py quality-gate
@@ -210,13 +222,14 @@ python main.py human-eval output/report_xxx.md --stock-code 600519
 
 ---
 
-## Web 工作台
+## 产品前端
 
-当前 Web 工作台已整理为更清晰的多级结构：
+旧 Python Web 界面已移除。当前 Web 入口由 FastAPI + Next.js 承接：
 
-- `首页概览 / 分析工作台 / 结果浏览` 三层视图分离
-- 结果浏览内部再按 `总览 / 分析 / 诊断` 分组组织标签页
-- 支持结果总览卡片、质量/可靠性仪表板、最近结果继续入口、历史筛选、历史 master-detail 回看、加载占位与失败分类引导
+- `python main.py api`：启动 FastAPI 兼容接口，提供研报、历史、运行任务、事件追踪、预警、简报与组合跟踪 API
+- `frontend/`：独立前端骨架（Next.js），当前消费兼容 API，并已补上动态 sidebar、全局运行中心、独立任务中心、事件追踪 / 事件详情 / 组合跟踪 / 预警中心 / 每日简报 / 股票工作台等页面，以及浏览器触发分析与状态轮询入口
+- 事件追踪接口包括 `/api/v1/events`、`/api/v1/events/{event_id}`、`/api/v1/events/{event_id}/analyze`、`/api/v1/watchlists`、`/api/v1/alerts`、`/api/v1/briefing/daily`
+- CLI/API 仍支持同时导出 Markdown / HTML 展示版 / 来源索引 JSON；环境已安装 `reportlab` 且可注册中文字体时，会额外生成 PDF 展示版
 
 如仅用于 GitHub 展示，建议在 README 首页保留架构、能力、快速开始和评测流程，把更长的技术细节放到 `docs/` 下。
 
@@ -228,11 +241,11 @@ python main.py human-eval output/report_xxx.md --stock-code 600519
 # 构建镜像
 docker build -t fin-report-agent .
 
-# 运行 Web 应用（需提供 .env）
-docker run --rm -p 8501:8501 --env-file .env fin-report-agent
+# 运行 API 服务（需提供 .env）
+docker run --rm -p 8000:8000 --env-file .env fin-report-agent
 ```
 
-启动后访问 `http://localhost:8501`。
+启动后访问 `http://localhost:8000/api/v1/health`。
 
 ---
 

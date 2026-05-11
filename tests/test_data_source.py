@@ -202,6 +202,45 @@ class TestEastmoneyHelpers:
         assert "新闻链接" in normalized.columns
 
 
+class TestGetStockProfile:
+    def test_get_stock_profile_preserves_current_price(self, monkeypatch):
+        from app.data_source.akshare_client import get_stock_profile
+
+        monkeypatch.setattr("app.data_source.akshare_client._read_cache", lambda *args, **kwargs: None)
+        monkeypatch.setattr("app.data_source.akshare_client._write_cache", lambda *args, **kwargs: None)
+
+        class DummyResponse:
+            def __init__(self, text):
+                self.text = text
+                self.encoding = "gbk"
+
+        def fake_requests_get(url, headers=None, timeout=10):
+            if "hq.sinajs.cn" in url:
+                return DummyResponse('var hq_str_sh600519="贵州茅台,0,0,0,0";')
+            if "qt.gtimg.cn" in url:
+                parts = [""] * 47
+                parts[1] = "贵州茅台"
+                parts[3] = "1688.00"
+                parts[39] = "25.5"
+                parts[45] = "25000"
+                parts[46] = "8.2"
+                return DummyResponse("~".join(parts))
+            return DummyResponse("")
+
+        class DummyAk:
+            @staticmethod
+            def stock_yjbb_em(date):
+                return pd.DataFrame([{"股票代码": "600519", "所处行业": "白酒"}])
+
+        monkeypatch.setattr("app.data_source.akshare_client.requests.get", fake_requests_get)
+        monkeypatch.setitem(__import__("sys").modules, "akshare", DummyAk)
+
+        profile = get_stock_profile("600519")
+
+        assert profile.current_price == pytest.approx(1688.0)
+        assert profile.total_shares == pytest.approx(25000 / 1688.0, rel=1e-4)
+
+
 class TestNewsHelpers:
     def test_clean_news_text_strips_html_and_truncates(self):
         from app.data_source.akshare_client import _clean_news_text

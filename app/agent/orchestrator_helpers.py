@@ -109,7 +109,7 @@ def build_tracking_indicators(state: AnalysisState) -> list[str]:
     return seen[:5] or ["营收增速", "净利润增速", "ROE", "经营现金流", "估值中枢变化"]
 
 
-def build_investment_advice_block(state: AnalysisState, *, tracking_indicators: list[str] | None = None) -> str:
+def build_investment_advice_block(state: AnalysisState, *, tracking_indicators: list[str] | None = None, include_rating: bool = True) -> str:
     rating = state.sections.get("rating", "中性")
     rating_detail = state.sections.get("rating_detail", "现有证据下维持审慎判断")
     if state.dcf and state.dcf.per_share_value > 0 and state.dcf.current_price > 0:
@@ -120,15 +120,27 @@ def build_investment_advice_block(state: AnalysisState, *, tracking_indicators: 
     else:
         anchor_text = "估值锚：现有数据不足以形成稳定目标价锚，建议等待更多财务与行业数据验证后再更新判断。"
     tracking = "；".join(tracking_indicators or build_tracking_indicators(state))
-    return (
-        f"当前评级：{rating}（{rating_detail}）。\n\n"
-        f"{anchor_text}\n\n"
-        f"后续跟踪指标：{tracking}。"
-    )
+    parts: list[str] = []
+    if include_rating:
+        parts.append(f"当前评级：{rating}（{rating_detail}）。")
+    parts.append(anchor_text)
+    parts.append(f"后续跟踪指标：{tracking}。")
+    return "\n\n".join(parts)
+
+
+def normalize_investment_advice_rating(advice_body: str, state: AnalysisState) -> tuple[str, bool]:
+    rating = state.sections.get("rating", "中性")
+    rating_detail = state.sections.get("rating_detail", "现有证据下维持审慎判断")
+    updated = advice_body
+    normalized_invest_rating = f"**投资评级：{rating}**"
+    normalized_current_rating = f"当前评级：{rating}（{rating_detail}）。"
+    updated = re.sub(r"\*\*投资评级：[^*\n]+\*\*", normalized_invest_rating, updated)
+    updated = re.sub(r"当前评级：[^^\n]*(?:。)?", normalized_current_rating, updated)
+    return updated, updated != advice_body
 
 
 def build_missing_section_body(orchestrator, heading: str, state: AnalysisState) -> str:
-    research_conclusion = state.sections.get("research_conclusion", "现有数据不足以支持进一步判断。")
+    research_conclusion = orchestrator._analysis_value(state, "research_conclusion", "现有数据不足以支持进一步判断。")
     if heading == "一、投资要点":
         body = research_conclusion[:280] or "现有数据不足以支持进一步判断。"
         gaps = collect_data_gaps(state)
@@ -197,12 +209,24 @@ def post_process_report(orchestrator, report: str, state: AnalysisState) -> str:
     advice_heading = "八、投资建议"
     advice_body = extract_section_body(report, advice_heading)
     if any(keyword not in advice_body for keyword in ("评级", "估值锚", "后续跟踪指标")):
-        supplement = build_investment_advice_block(state, tracking_indicators=tracking_indicators)
+        include_rating = "投资评级" not in advice_body and "当前评级" not in advice_body
+        supplement = build_investment_advice_block(state, tracking_indicators=tracking_indicators, include_rating=include_rating)
         if supplement not in advice_body:
             advice_body = (advice_body + "\n\n" + supplement).strip() if advice_body else supplement
             report = upsert_section(report, advice_heading, advice_body)
             fixes.append("investment_section_enriched")
+            advice_body = extract_section_body(report, advice_heading)
 
+    normalized_advice_body, rating_fixed = normalize_investment_advice_rating(advice_body, state)
+    if rating_fixed:
+        report = upsert_section(report, advice_heading, normalized_advice_body)
+        fixes.append("investment_rating_aligned")
+
+    state.run_payload["postprocess"] = {
+        "fix_count": len(fixes),
+        "fixes": fixes,
+        "fix_summary": "\n".join(fixes),
+    }
     state.sections["postprocess_fix_count"] = str(len(fixes))
     state.sections["postprocess_fixes"] = "\n".join(fixes)
     return report.strip()

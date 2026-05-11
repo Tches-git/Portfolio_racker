@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from statistics import mean
+from typing import Any
 
 import run_ablation
 from app.config import REGRESSION_OUTPUT_DIR
@@ -16,6 +18,31 @@ if sys.platform == "win32":
 DEFAULT_GOLDEN_STOCKS = ["600519", "000858", "300750", "600036", "002594"]
 OUTPUT_DIR = REGRESSION_OUTPUT_DIR
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _load_previous_summary(output_dir: Path, summary_name: str) -> dict[str, Any] | None:
+    summary_path = output_dir / summary_name
+    if not summary_path.exists() or not summary_path.is_file():
+        return None
+    try:
+        return json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _build_history_summary(current: dict, previous: dict | None) -> dict[str, Any]:
+    if not previous:
+        return {}
+    previous_regression = previous.get("regression", {}) if isinstance(previous.get("regression"), dict) else {}
+    previous_aggregate = previous.get("aggregate", {}) if isinstance(previous.get("aggregate"), dict) else {}
+    previous_baseline = previous_aggregate.get("baseline", {}) if isinstance(previous_aggregate.get("baseline"), dict) else {}
+    return {
+        "previous_overall_pass": previous_regression.get("overall_pass"),
+        "previous_samples": previous_regression.get("samples"),
+        "score_delta": round(current.get("checks", {}).get("avg_score", {}).get("actual", 0.0) - previous_regression.get("checks", {}).get("avg_score", {}).get("actual", 0.0), 2) if previous_regression.get("checks", {}).get("avg_score") else None,
+        "success_rate_delta": round(current.get("checks", {}).get("success_rate", {}).get("actual", 0.0) - previous_regression.get("checks", {}).get("success_rate", {}).get("actual", 0.0), 1) if previous_regression.get("checks", {}).get("success_rate") else None,
+        "baseline_duration_delta_s": round(current.get("aggregate", {}).get("baseline", {}).get("avg_duration_s", 0.0) - previous_baseline.get("avg_duration_s", 0.0), 2) if "avg_duration_s" in previous_baseline else None,
+    }
 
 
 def build_regression_checks(
@@ -88,6 +115,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--stocks", nargs="+", default=DEFAULT_GOLDEN_STOCKS, help="固定回归股票代码列表")
     parser.add_argument("--llm-judge", action="store_true", help="启用 LLM-as-Judge 评分（成本更高）")
     parser.add_argument("--output-dir", default=str(OUTPUT_DIR), help="输出目录")
+    parser.add_argument("--summary-name", default="regression_summary", help="回归汇总文件名前缀（不含扩展名）")
     parser.add_argument("--min-success-rate", type=float, default=100.0, help="最低成功率阈值（百分比）")
     parser.add_argument("--min-avg-score", type=float, default=70.0, help="最低平均评分阈值")
     parser.add_argument("--min-avg-section-coverage", type=float, default=0.875, help="最低平均章节覆盖率阈值")
@@ -99,6 +127,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    summary_stem = args.summary_name.strip() or "regression_summary"
+    previous_summary = _load_previous_summary(output_dir, f"{summary_stem}.json") or {}
+    previous_aggregate = previous_summary.get("aggregate") if isinstance(previous_summary.get("aggregate"), dict) else None
 
     rows: list[dict] = []
     for stock_code in args.stocks:
@@ -113,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         if row:
             rows.append(row)
 
-    summary_md, aggregate = run_ablation.summarize_results(rows, use_llm_judge=args.llm_judge)
+    summary_md, aggregate = run_ablation.summarize_results(rows, use_llm_judge=args.llm_judge, previous_aggregate=previous_aggregate)
     regression = build_regression_checks(
         rows,
         min_success_rate=args.min_success_rate,
@@ -121,13 +153,27 @@ def main(argv: list[str] | None = None) -> int:
         min_avg_section_coverage=args.min_avg_section_coverage,
         min_anchor_coverage=args.min_anchor_coverage,
     )
+    aggregate_experiments = aggregate["experiments"] if isinstance(aggregate, dict) and "experiments" in aggregate else aggregate
+    payload = {
+        "rows": rows,
+        "aggregate": aggregate_experiments,
+        "experiment_contracts": aggregate.get("experiment_contracts", {}) if isinstance(aggregate, dict) else {},
+        "history_summary": _build_history_summary({"checks": regression.get("checks", {}), "aggregate": aggregate_experiments}, previous_summary),
+        "regression": regression,
+        "artifact_index": {
+            "summary_markdown_path": str(output_dir / f"{summary_stem}.md"),
+            "summary_json_path": str(output_dir / f"{summary_stem}.json"),
+            "ablation_summary_markdown_path": str(output_dir / "ablation_summary.md"),
+            "ablation_summary_json_path": str(output_dir / "ablation_summary.json"),
+        },
+    }
     summary_md = append_regression_section(summary_md, regression)
 
-    summary_path = output_dir / "regression_summary.md"
-    summary_json_path = output_dir / "regression_summary.json"
+    summary_path = output_dir / f"{summary_stem}.md"
+    summary_json_path = output_dir / f"{summary_stem}.json"
     summary_path.write_text(summary_md, encoding="utf-8")
     summary_json_path.write_text(
-        json.dumps({"rows": rows, "aggregate": aggregate, "regression": regression}, ensure_ascii=False, indent=2),
+        json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 

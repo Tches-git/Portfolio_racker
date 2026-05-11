@@ -7,7 +7,7 @@ from typing import Callable
 from app.agent.orchestrator import AgentOrchestrator
 from app.config import ensure_runtime_config
 from app.llm import token_stats
-from app.models import AnalysisState
+from app.models import AblationConfig, AnalysisState
 
 StepCallback = Callable[[str, str, AnalysisState], None]
 
@@ -15,17 +15,18 @@ StepCallback = Callable[[str, str, AnalysisState], None]
 class ReportEngine:
     """研报引擎 — 基于多Agent编排 + RAG增强"""
 
-    def __init__(self, on_step: StepCallback | None = None) -> None:
+    def __init__(self, on_step: StepCallback | None = None, *, ablation_config: AblationConfig | None = None) -> None:
         self.on_step = on_step or (lambda *_: None)
+        self.ablation_config = ablation_config or AblationConfig()
         self._orchestrator: AgentOrchestrator | None = None
         self._last_run_metrics: dict = {}
 
-    def run(self, stock_code: str) -> AnalysisState:
+    def run(self, stock_code: str, *, uploaded_items: list[dict] | None = None) -> AnalysisState:
         ensure_runtime_config(require_api_key=False)
         start = time.perf_counter()
         before_tokens = token_stats.snapshot()
-        self._orchestrator = AgentOrchestrator(on_step=self.on_step)
-        state = self._orchestrator.run(stock_code)
+        self._orchestrator = AgentOrchestrator(on_step=self.on_step, ablation_config=self.ablation_config)
+        state = self._orchestrator.run(stock_code, uploaded_items=uploaded_items)
         elapsed_ms = (time.perf_counter() - start) * 1000
         after_tokens = token_stats.snapshot()
         run_metrics = {
@@ -44,6 +45,7 @@ class ReportEngine:
             run_metrics["errors"] = trace_summary.get("errors", 0)
         self._last_run_metrics = run_metrics
         state.run_metrics = run_metrics
+        state.run_payload["metrics"] = dict(run_metrics)
         state.sections["run_metrics"] = str(run_metrics)
         return state
 

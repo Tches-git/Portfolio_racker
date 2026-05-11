@@ -1,0 +1,331 @@
+"""产品前端 API 入口（兼容 Phase 1/2）。"""
+from __future__ import annotations
+
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+
+from app.api.download import ExportNotFoundError, resolve_export_file
+from app.api.mappers import build_health_response, map_history_record
+from app.api.run_manager import RunActionError, RunNotFoundError, run_manager
+from app.api.schemas import AnalysisRunCreateRequest, AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateRequest, BatchRunCreateResponse, DailyBriefingResponse, EventAnalyzeRequest, HealthResponse, LatestReportResponse, MarketEventDTO, MarketEventListResponse, OpsMetricsResponse, ReportDiffResponse, RunAssignmentRequest, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, StoreBackupResponse, StoreHealthResponse, TrackingAlertDTO, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDTO, WatchlistListResponse, WorkspaceStocksResponse
+from app.api.services import NotFoundError, get_latest_report, get_stock_history
+from app.data_source.akshare_client import get_recent_news
+from app.memory.store import get_memory_store
+from app.tracking.service import collect_historical_events, collect_market_events, collect_stock_events, find_market_event
+from app.tracking.alerts import build_tracking_alerts
+from app.tracking.briefing import build_daily_briefing
+from app.tracking.watchlist import create_watchlist, list_watchlists
+
+app = FastAPI(title="AI Research Assistant API", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def _actor(actor: str = Header(default='system', alias='X-Actor'), role: str = Header(default='admin', alias='X-Role')) -> tuple[str, str]:
+    return actor or 'system', role or 'viewer'
+
+
+@app.get("/api/v1/health", response_model=HealthResponse)
+def health() -> HealthResponse:
+    return build_health_response()
+
+
+@app.get("/api/v1/reports/latest/{stock_code}", response_model=LatestReportResponse)
+def latest_report(stock_code: str) -> LatestReportResponse:
+    try:
+        return get_latest_report(stock_code)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/history/{stock_code}", response_model=StockHistoryResponse)
+def stock_history(stock_code: str) -> StockHistoryResponse:
+    try:
+        return get_stock_history(stock_code)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/news/{stock_code}", response_model=StockNewsResponse)
+def stock_news(stock_code: str, limit: int = 8) -> StockNewsResponse:
+    items = get_recent_news(stock_code, count=max(1, min(limit, 20)))
+    return StockNewsResponse(stock_code=stock_code, items=items, total=len(items))
+
+
+@app.get("/api/v1/events", response_model=MarketEventListResponse)
+def market_events(
+    stock_codes: str = "",
+    limit_per_stock: int = 4,
+    mode: str = "realtime",
+    provider: str = "",
+    event_type: str = "",
+    impact_level: str = "",
+    start: str = "",
+    end: str = "",
+) -> MarketEventListResponse:
+    codes = [part.strip() for part in stock_codes.split(",") if part.strip()] if stock_codes else None
+    normalized_mode = "history" if mode == "history" else "realtime"
+    if normalized_mode == "history":
+        collection = collect_historical_events(
+            stock_codes=codes,
+            provider=provider,
+            event_type=event_type,
+            impact_level=impact_level,
+            start=start,
+            end=end,
+            limit=max(1, min(limit_per_stock * max(1, len(codes or []), 4), 120)),
+        )
+    else:
+        collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
+    return MarketEventListResponse(
+        items=[MarketEventDTO(**event.__dict__) for event in collection.items],
+        total=collection.total,
+        high_impact_count=collection.high_impact_count,
+        placeholder_count=collection.placeholder_count,
+        duplicate_count=collection.duplicate_count,
+        source_count=collection.source_count,
+        mode=normalized_mode,
+    )
+
+
+@app.get("/api/v1/events/{event_id}", response_model=MarketEventDTO)
+def event_detail(event_id: str, stock_codes: str = "") -> MarketEventDTO:
+    codes = [part.strip() for part in stock_codes.split(",") if part.strip()] if stock_codes else None
+    event = find_market_event(event_id, stock_codes=codes)
+    if event is None:
+        raise HTTPException(status_code=404, detail=f"未找到事件: {event_id}")
+    return MarketEventDTO(**event.__dict__)
+
+
+@app.post("/api/v1/events/{event_id}/analyze", response_model=AnalysisRunResponse, status_code=202)
+def analyze_event(
+    event_id: str,
+    payload: EventAnalyzeRequest | None = None,
+    actor_header: str = Header(default='system', alias='X-Actor'),
+    role_header: str = Header(default='admin', alias='X-Role'),
+) -> AnalysisRunResponse:
+    event = find_market_event(event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail=f"未找到事件: {event_id}")
+    actor, role = _actor(actor_header, role_header)
+    context = {
+        "event_id": event.event_id,
+        "title": event.title,
+        "summary": event.summary,
+        "source": event.source,
+        "provider": event.provider,
+        "note": payload.note if payload else "",
+    }
+    run = run_manager.start_event_run(event.stock_code, event_context=context, actor=actor, role=role)
+    return run_manager.get_run_response(run.run_id)
+
+
+@app.get("/api/v1/stocks/{stock_code}/events", response_model=StockEventTimelineResponse)
+def stock_events(stock_code: str, limit: int = 6) -> StockEventTimelineResponse:
+    collection = collect_stock_events(stock_code, limit=max(1, min(limit, 12)))
+    stock_name = collection.items[0].stock_name if collection.items else ""
+    return StockEventTimelineResponse(
+        stock_code=stock_code,
+        stock_name=stock_name,
+        items=[MarketEventDTO(**event.__dict__) for event in collection.items],
+        total=collection.total,
+        high_impact_count=collection.high_impact_count,
+        placeholder_count=collection.placeholder_count,
+        duplicate_count=collection.duplicate_count,
+        source_count=collection.source_count,
+        mode="realtime",
+    )
+
+
+@app.get("/api/v1/alerts", response_model=TrackingAlertListResponse)
+def tracking_alerts(stock_codes: str = "", limit_per_stock: int = 4) -> TrackingAlertListResponse:
+    codes = [part.strip() for part in stock_codes.split(",") if part.strip()] if stock_codes else None
+    collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
+    alerts = build_tracking_alerts(collection)
+    return TrackingAlertListResponse(
+        items=[TrackingAlertDTO(**alert.__dict__) for alert in alerts],
+        total=len(alerts),
+        high_severity_count=sum(1 for alert in alerts if alert.severity == "high"),
+        risk_alert_count=sum(1 for alert in alerts if alert.alert_type == "risk_watch"),
+        source_degraded_count=sum(1 for alert in alerts if alert.alert_type == "source_degraded"),
+    )
+
+
+@app.get("/api/v1/briefing/daily", response_model=DailyBriefingResponse)
+def daily_briefing(stock_codes: str = "", limit_per_stock: int = 4) -> DailyBriefingResponse:
+    codes = [part.strip() for part in stock_codes.split(",") if part.strip()] if stock_codes else None
+    collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
+    briefing = build_daily_briefing(collection)
+    return DailyBriefingResponse(
+        title=briefing.title,
+        summary=briefing.summary,
+        generated_at=briefing.generated_at,
+        total_events=briefing.total_events,
+        high_impact_count=briefing.high_impact_count,
+        negative_event_count=briefing.negative_event_count,
+        source_count=briefing.source_count,
+        key_events=[MarketEventDTO(**event.__dict__) for event in briefing.key_events],
+        alerts=[TrackingAlertDTO(**alert.__dict__) for alert in briefing.alerts],
+        suggested_actions=briefing.suggested_actions,
+        themes=briefing.themes,
+        review_required_events=[MarketEventDTO(**event.__dict__) for event in briefing.review_required_events],
+    )
+
+
+@app.get("/api/v1/watchlists", response_model=WatchlistListResponse)
+def watchlists() -> WatchlistListResponse:
+    items = list_watchlists()
+    return WatchlistListResponse(items=[WatchlistDTO(**item.__dict__) for item in items], total=len(items))
+
+
+@app.post("/api/v1/watchlists", response_model=WatchlistDTO, status_code=201)
+def create_tracking_watchlist(payload: WatchlistCreateRequest) -> WatchlistDTO:
+    item = create_watchlist(payload.name, payload.stock_codes, description=payload.description)
+    return WatchlistDTO(**item.__dict__)
+
+
+@app.get("/api/v1/workspace/stocks", response_model=WorkspaceStocksResponse)
+def workspace_stocks() -> WorkspaceStocksResponse:
+    store = get_memory_store()
+    return WorkspaceStocksResponse(items=store.get_all_stocks())
+
+
+@app.get("/api/v1/store/health", response_model=StoreHealthResponse)
+def store_health() -> StoreHealthResponse:
+    return StoreHealthResponse(**run_manager.store_health())
+
+
+@app.get("/api/v1/ops/metrics", response_model=OpsMetricsResponse)
+def ops_metrics() -> OpsMetricsResponse:
+    return OpsMetricsResponse(**run_manager.ops_metrics())
+
+
+@app.post("/api/v1/store/backup", response_model=StoreBackupResponse)
+def backup_store(actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> StoreBackupResponse:
+    _actor(actor_header, role_header)
+    return StoreBackupResponse(backup_path=run_manager.backup_store())
+
+
+@app.get("/api/v1/runs", response_model=AnalysisRunListResponse)
+def list_runs(limit: int = 10) -> AnalysisRunListResponse:
+    return run_manager.list_runs(limit=limit)
+
+
+@app.post("/api/v1/runs", response_model=AnalysisRunResponse, status_code=202)
+def create_run(payload: AnalysisRunCreateRequest, actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> AnalysisRunResponse:
+    actor, role = _actor(actor_header, role_header)
+    run = run_manager.start_run(payload.stock_code, actor=actor, role=role)
+    return run_manager.get_run_response(run.run_id)
+
+
+@app.post("/api/v1/runs/batch", response_model=BatchRunCreateResponse, status_code=202)
+def create_batch_runs(payload: BatchRunCreateRequest, actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> BatchRunCreateResponse:
+    actor, role = _actor(actor_header, role_header)
+    runs = run_manager.start_batch(payload.stock_codes, actor=actor, role=role)
+    return BatchRunCreateResponse(items=[run_manager.get_run_response(item.run_id) for item in runs], total=len(runs))
+
+
+@app.get("/api/v1/reports/diff/{stock_code}", response_model=ReportDiffResponse)
+def report_diff(stock_code: str) -> ReportDiffResponse:
+    store = get_memory_store()
+    records = store.get_history(stock_code=stock_code, limit=2)
+    if len(records) < 2:
+        return ReportDiffResponse(stock_code=stock_code, summary='至少需要两份历史报告才能生成版本 diff')
+    latest = map_history_record(records[0])
+    previous = map_history_record(records[1])
+    rating_delta = latest.rating_score - previous.rating_score
+    upside_delta = latest.dcf_upside - previous.dcf_upside
+    risk_count_delta = latest.risk_count - previous.risk_count
+    return ReportDiffResponse(
+        stock_code=stock_code,
+        base_timestamp=previous.timestamp,
+        compare_timestamp=latest.timestamp,
+        rating_changed=latest.rating != previous.rating,
+        rating_delta=rating_delta,
+        upside_delta=upside_delta,
+        risk_count_delta=risk_count_delta,
+        conclusion_changed=latest.conclusion != previous.conclusion,
+        summary=f'评级变化 {previous.rating or "--"} → {latest.rating or "--"}；估值空间变化 {upside_delta:.1f}%；风险数量变化 {risk_count_delta}',
+    )
+
+
+@app.get("/api/v1/runs/{run_id}", response_model=AnalysisRunResponse)
+def get_run(run_id: str) -> AnalysisRunResponse:
+    try:
+        return run_manager.get_run_response(run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/runs/{run_id}/retry", response_model=AnalysisRunResponse, status_code=202)
+def retry_run(run_id: str, actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> AnalysisRunResponse:
+    actor, role = _actor(actor_header, role_header)
+    try:
+        run = run_manager.retry_run(run_id, actor=actor, role=role)
+        return run_manager.get_run_response(run.run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RunActionError as exc:
+        raise HTTPException(status_code=403 if '无权' in str(exc) else 409, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/runs/{run_id}/cancel", response_model=AnalysisRunResponse)
+def cancel_run(run_id: str, actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> AnalysisRunResponse:
+    actor, role = _actor(actor_header, role_header)
+    try:
+        run_manager.cancel_run(run_id, actor=actor, role=role)
+        return run_manager.get_run_response(run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RunActionError as exc:
+        raise HTTPException(status_code=403 if '无权' in str(exc) else 409, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/runs/{run_id}/assign", response_model=AnalysisRunResponse)
+def assign_run(run_id: str, payload: RunAssignmentRequest, actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> AnalysisRunResponse:
+    actor, role = _actor(actor_header, role_header)
+    try:
+        run_manager.assign_owner(run_id, payload.owner, actor=actor, role=role)
+        return run_manager.get_run_response(run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RunActionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/runs/{run_id}/archive", response_model=AnalysisRunResponse)
+def archive_run(run_id: str, actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> AnalysisRunResponse:
+    actor, role = _actor(actor_header, role_header)
+    try:
+        run_manager.archive_run(run_id, actor=actor, role=role)
+        return run_manager.get_run_response(run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RunActionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/exports/{filename}")
+def download_export(filename: str) -> FileResponse:
+    try:
+        path = resolve_export_file(filename)
+    except ExportNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    media_type = {
+        ".md": "text/markdown",
+        ".html": "text/html",
+        ".pdf": "application/pdf",
+        ".log": "text/plain",
+        ".json": "application/json",
+    }.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media_type, filename=path.name)

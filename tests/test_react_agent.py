@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import app.agent.react_agent as react_mod
-from app.models import AnalysisState, PlanItem
+from app.models import AblationConfig, AnalysisState, PlanItem
 
 
 def test_react_agent_reflects_and_supplements(monkeypatch):
@@ -73,3 +73,35 @@ def test_react_agent_skips_supplement_when_complete(monkeypatch):
     assert result.total_steps == 1
     assert result.reflection == "已完成"
     assert called["supplement"] is False
+
+
+def test_react_agent_skips_reflection_when_disabled(monkeypatch):
+    plan = [PlanItem(step_id="S1", objective="获取信息", preferred_tool="fetch_stock_profile")]
+    main_steps = [react_mod.AgentStep(step_num=1, action="fetch_stock_profile", action_input={}, observation="ok")]
+
+    monkeypatch.setattr(react_mod, "_make_tools", lambda state: [])
+    monkeypatch.setattr(react_mod, "format_tools_prompt", lambda tools: "tools")
+    monkeypatch.setattr(react_mod.ReActAgent, "_plan", lambda self, task, tools_prompt: plan)
+    monkeypatch.setattr(react_mod.ReActAgent, "_act", lambda self, task, tools, tools_prompt, plan_text, state: (main_steps, "最终结论"))
+
+    called = {"reflect": False}
+
+    def _reflect(*args, **kwargs):
+        called["reflect"] = True
+        return {"summary": "不应执行"}
+
+    monkeypatch.setattr(react_mod.ReActAgent, "_reflect", _reflect)
+
+    events: list[str] = []
+    agent = react_mod.ReActAgent(
+        on_step=lambda event, detail, info: events.append(event),
+        ablation_config=AblationConfig(enable_reflection=False),
+    )
+    result = agent.run("task", AnalysisState(stock_code="600519"))
+
+    assert result.answer == "最终结论"
+    assert result.total_steps == 1
+    assert result.reflection == ""
+    assert called["reflect"] is False
+    assert "reflecting" not in events
+    assert "reflection_done" in events

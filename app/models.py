@@ -31,6 +31,7 @@ class StockProfile:
     pe_ratio: float = 0.0
     pb_ratio: float = 0.0
     total_shares: float = 0.0
+    current_price: float = 0.0
     listing_date: str = ""
 
 @dataclass
@@ -125,6 +126,27 @@ class TrendResult:
     cagr: float = 0.0            # CAGR %
     trend_direction: str = ""     # "上升"/"下降"/"波动"
 
+
+@dataclass
+class SourceDocument:
+    """多模态/外部来源文档"""
+    source_id: str
+    source_type: str
+    title: str
+    text_blocks: list[str] = field(default_factory=list)
+    tables: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, str] = field(default_factory=dict)
+    extracted_at: str = ""
+
+
+@dataclass
+class AblationConfig:
+    """消融实验运行配置"""
+    label: str = "baseline"
+    enable_reflection: bool = True
+    enable_rag: bool = True
+
+
 @dataclass
 class AnalysisState:
     """分析流程状态"""
@@ -135,6 +157,16 @@ class AnalysisState:
     peers: list[PeerCompany] = field(default_factory=list)
     risks: list[RiskItem] = field(default_factory=list)
     news: list[dict[str, str]] = field(default_factory=list)
+    documents: list[SourceDocument] = field(default_factory=list)
+    source_refs: list[dict[str, Any]] = field(default_factory=list)
+    filings: list[dict[str, str]] = field(default_factory=list)
+    announcements: list[dict[str, str]] = field(default_factory=list)
+    runtime_input_payload: dict[str, Any] = field(default_factory=dict)
+    memory_payload: dict[str, Any] = field(default_factory=dict)
+    graph_payload: dict[str, Any] = field(default_factory=dict)
+    analysis_payload: dict[str, Any] = field(default_factory=dict)
+    run_payload: dict[str, Any] = field(default_factory=dict)
+    ablation_config: AblationConfig = field(default_factory=AblationConfig)
     sections: dict[str, str] = field(default_factory=dict)   # section_id -> 内容
     reviews: dict[str, dict] = field(default_factory=dict)
     trace: list[str] = field(default_factory=list)

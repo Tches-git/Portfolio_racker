@@ -67,6 +67,11 @@ def _sanitize_external_text(text: str, *, max_len: int = 200) -> str:
     return text[:max_len]
 
 
+def _wrap_external_text(text: str) -> str:
+    cleaned = _sanitize_external_text(text)
+    return f"<external_data>{cleaned}</external_data>" if cleaned else ""
+
+
 def _build_risk(category: str, level: str, description: str, *, metric: str = "", value: str = "", evidence: str = "", transmission_path: str = "", impact: str = "", source: str = "", time: str = "") -> RiskItem:
     return RiskItem(
         category=category,
@@ -209,13 +214,18 @@ def assess_news_risks(news: list[dict[str, str]], stock_name: str) -> list[RiskI
         if not title or normalized_title in seen_titles:
             continue
         seen_titles.add(normalized_title)
+        wrapped_title = _wrap_external_text(title)
+        wrapped_content = _wrap_external_text(content)
         for rule in _NEWS_RULES:
             if any(keyword in text for keyword in rule["keywords"]):
+                evidence = f"新闻标题：{wrapped_title}" if wrapped_title else ""
+                if wrapped_content:
+                    evidence = f"{evidence}；摘要：{wrapped_content}" if evidence else f"摘要：{wrapped_content}"
                 risks.append(_build_risk(
                     "news",
                     rule["level"],
                     rule["description"],
-                    evidence=f"新闻标题：{title}" + (f"；摘要：{content}" if content else ""),
+                    evidence=evidence,
                     transmission_path=rule["transmission_path"],
                     impact=rule["impact"],
                     source=item.get("source") or item.get("channel") or "news",

@@ -7,6 +7,27 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from app.models import AnalysisState, ToolCallRecord
+from app.data_source.live_tools import (
+    extract_document_summary,
+    extract_document_tables,
+    fetch_announcements,
+    fetch_broker_reports,
+    fetch_exchange_filings,
+    fetch_fund_holdings,
+    fetch_live_quotes,
+)
+from app.agent.prefetch_helpers import (
+    build_live_source_refs,
+    build_quote_source_ref,
+    format_financials_observation,
+    format_live_quote_summary,
+    format_news_observation,
+    format_peers_observation,
+    format_profile_observation,
+    initialize_live_tools_payload,
+    sync_live_tools_status,
+    update_live_tools_payload,
+)
 from app.utils.tracer import get_active_tracer
 
 logger = logging.getLogger("fin.agent.tools")
@@ -27,6 +48,15 @@ class Tool:
 def _make_tools(state: AnalysisState) -> list[Tool]:
     """根据当前状态创建工具列表"""
 
+    initial_live_tools_payload = initialize_live_tools_payload(state)
+    live_tools_success_state: dict[str, bool] = dict(initial_live_tools_payload.get("success_map", {})) if isinstance(initial_live_tools_payload.get("success_map", {}), dict) else {}
+
+    def _build_quote_source_ref(quote: dict[str, Any]) -> dict[str, Any]:
+        return build_quote_source_ref(state.stock_code, quote)
+
+    def _build_live_source_refs(items: list[dict[str, Any]], *, source_type: str, default_title: str, default_retrieval_mode: str, default_evidence_type: str) -> list[dict[str, Any]]:
+        return build_live_source_refs(items, source_type=source_type, default_title=default_title, default_retrieval_mode=default_retrieval_mode, default_evidence_type=default_evidence_type)
+
     def fetch_stock_profile(code: str = "") -> str:
         """获取公司基本信息"""
         from app.data_source.akshare_client import get_stock_profile
@@ -36,13 +66,7 @@ def _make_tools(state: AnalysisState) -> list[Tool]:
             if target == state.stock_code:
                 state.profile = profile
                 state.stock_name = profile.name
-            return (
-                f"公司: {profile.name} ({profile.code})\n"
-                f"行业: {profile.industry}\n"
-                f"市值: {profile.market_cap:.0f}亿\n"
-                f"PE: {profile.pe_ratio:.1f} | PB: {profile.pb_ratio:.1f}\n"
-                f"总股本: {profile.total_shares:.2f}亿股"
-            )
+            return format_profile_observation(profile)
         except Exception as e:
             return f"获取失败: {e}"
 
@@ -54,12 +78,7 @@ def _make_tools(state: AnalysisState) -> list[Tool]:
             metrics = get_financial_metrics(target)
             if target == state.stock_code:
                 state.metrics = metrics
-            if not metrics:
-                return "未获取到财务数据"
-            lines = [f"获取到 {len(metrics)} 期财务数据:"]
-            for m in metrics[:8]:
-                lines.append(m.summary())
-            return "\n".join(lines)
+            return format_financials_observation(metrics)
         except Exception as e:
             return f"获取失败: {e}"
 
@@ -72,12 +91,7 @@ def _make_tools(state: AnalysisState) -> list[Tool]:
         try:
             peers = get_peer_companies(ind, exclude_code=state.stock_code)
             state.peers = peers
-            if not peers:
-                return f"未找到{ind}行业的可比公司"
-            lines = [f"找到 {len(peers)} 家{ind}行业可比公司:"]
-            for p in peers:
-                lines.append(f"  {p.name}({p.code}): 市值{p.market_cap:.0f}亿 PE={p.pe_ratio:.1f} ROE={p.roe:.1f}%")
-            return "\n".join(lines)
+            return format_peers_observation(peers, ind)
         except Exception as e:
             return f"获取失败: {e}"
 
@@ -90,12 +104,7 @@ def _make_tools(state: AnalysisState) -> list[Tool]:
         try:
             news = get_recent_news(target)
             state.news = news
-            if not news:
-                return "未获取到新闻"
-            lines = [f"获取到 {len(news)} 条新闻:"]
-            for n in news[:5]:
-                lines.append(f"  · {n['title']}")
-            return "\n".join(lines)
+            return format_news_observation(news)
         except Exception as e:
             return f"获取失败: {e}"
 
@@ -227,6 +236,116 @@ def _make_tools(state: AnalysisState) -> list[Tool]:
         results = kb.query(question, top_k=5, candidate_k=15, use_rerank=True)
         return kb.format_context(results)
 
+    def fetch_announcements_tool(limit: int = 5) -> str:
+        try:
+            items = fetch_announcements(state.stock_code, state.stock_name, limit=limit)
+        except Exception as exc:
+            message = str(exc)
+            state.sections["announcement_error"] = message
+            sync_live_tools_status(state, live_tools_success_state, success_key="announcement", succeeded=False, error_key="announcement", error_message=message)
+            return f"获取失败: {message}"
+        state.announcements = items
+        state.source_refs.extend(_build_live_source_refs(items, source_type="announcement", default_title="", default_retrieval_mode="fallback_news", default_evidence_type="announcement"))
+        update_live_tools_payload(state, announcement_count=len(items), source_ref_count=len(state.source_refs))
+        sync_live_tools_status(state, live_tools_success_state, success_key="announcement", succeeded=True, error_key="announcement")
+        if not items:
+            return "未获取到公告"
+        return "\n".join(f"- {item['title']} | {item.get('time', '')} | {item.get('source', '')}" for item in items)
+
+    def fetch_live_quotes_tool(**kwargs) -> str:
+        try:
+            quote = fetch_live_quotes(state.stock_code)
+        except Exception as exc:
+            message = str(exc)
+            state.sections["quote_error"] = message
+            sync_live_tools_status(state, live_tools_success_state, success_key="quote", succeeded=False, error_key="quote", error_message=message)
+            return f"获取失败: {message}"
+        quote_summary = format_live_quote_summary(quote)
+        state.source_refs.append(_build_quote_source_ref(quote))
+        update_live_tools_payload(
+            state,
+            quote_snapshot=dict(quote),
+            quote_summary=quote_summary,
+            source_ref_count=len(state.source_refs),
+        )
+        sync_live_tools_status(state, live_tools_success_state, success_key="quote", succeeded=True, error_key="quote")
+        state.sections["live_quote_snapshot"] = str(quote)
+        return (
+            f"标题: {quote.get('title', '')}\n"
+            f"PE: {quote.get('pe_ratio', 0):.1f} | PB: {quote.get('pb_ratio', 0):.1f}\n"
+            f"市值: {quote.get('market_cap', 0):.0f}亿"
+        )
+
+    def fetch_exchange_filings_tool(limit: int = 5) -> str:
+        try:
+            items = fetch_exchange_filings(state.stock_code, state.stock_name, limit=limit)
+        except Exception as exc:
+            message = str(exc)
+            state.sections["filing_error"] = message
+            sync_live_tools_status(state, live_tools_success_state, success_key="filing", succeeded=False, error_key="filing", error_message=message)
+            return f"获取失败: {message}"
+        state.filings = items
+        state.source_refs.extend(_build_live_source_refs(items, source_type="filing", default_title="", default_retrieval_mode="fallback_news", default_evidence_type="filing"))
+        update_live_tools_payload(state, filing_count=len(items), source_ref_count=len(state.source_refs))
+        sync_live_tools_status(state, live_tools_success_state, success_key="filing", succeeded=True, error_key="filing")
+        if not items:
+            return "未获取到交易所文件"
+        return "\n".join(f"- {item['title']} | {item.get('time', '')} | {item.get('source', '')}" for item in items)
+
+    def fetch_broker_reports_tool(limit: int = 3) -> str:
+        try:
+            items = fetch_broker_reports(state.stock_code, state.stock_name, limit=limit)
+        except Exception as exc:
+            message = str(exc)
+            state.sections["broker_report_error"] = message
+            sync_live_tools_status(state, live_tools_success_state, success_key="broker_report", succeeded=False, error_key="broker_report", error_message=message)
+            return f"获取失败: {message}"
+        state.source_refs.extend(_build_live_source_refs(items, source_type="broker_report", default_title="券商观点", default_retrieval_mode="placeholder", default_evidence_type="broker_view"))
+        update_live_tools_payload(state, broker_report_count=len(items), source_ref_count=len(state.source_refs))
+        sync_live_tools_status(state, live_tools_success_state, success_key="broker_report", succeeded=True, error_key="broker_report")
+        if not items:
+            return "未获取到券商研报"
+        return "\n".join(f"- {item['title']} | {item.get('summary', '')}" for item in items)
+
+    def fetch_fund_holdings_tool(limit: int = 5) -> str:
+        try:
+            items = fetch_fund_holdings(state.stock_code, limit=limit)
+        except Exception as exc:
+            message = str(exc)
+            state.sections["fund_holding_error"] = message
+            sync_live_tools_status(state, live_tools_success_state, success_key="fund_holding", succeeded=False, error_key="fund_holding", error_message=message)
+            return f"获取失败: {message}"
+        state.source_refs.extend(_build_live_source_refs(items, source_type="fund_holding", default_title="基金持仓", default_retrieval_mode="api", default_evidence_type="institutional_holding"))
+        update_live_tools_payload(state, fund_holding_count=len(items), source_ref_count=len(state.source_refs))
+        sync_live_tools_status(state, live_tools_success_state, success_key="fund_holding", succeeded=True, error_key="fund_holding")
+        if not items:
+            return "未获取到基金持仓"
+        return "\n".join(f"- {item['title']} | {item.get('summary', '')}" for item in items)
+
+    def extract_document_tables_tool(source_id: str = "") -> str:
+        if not state.documents:
+            return "暂无已上传文档"
+        document = next((doc for doc in state.documents if not source_id or doc.source_id == source_id), state.documents[0])
+        tables = extract_document_tables(document)
+        if not tables:
+            return f"文档《{document.title}》未识别到表格"
+        summaries = []
+        for idx, table in enumerate(tables, 1):
+            headers = " / ".join(table.get("headers", [])[:5])
+            summaries.append(f"表{idx}: {len(table.get('rows', []))}行 | {headers}")
+        return "\n".join(summaries)
+
+    def extract_document_summary_tool(source_id: str = "") -> str:
+        if not state.documents:
+            return "暂无已上传文档"
+        document = next((doc for doc in state.documents if not source_id or doc.source_id == source_id), state.documents[0])
+        summary = extract_document_summary(document)
+        return (
+            f"标题: {summary.get('title', '')}\n"
+            f"类型: {summary.get('source_type', '')} | 状态: {summary.get('parse_status', '')}\n"
+            f"摘要: {summary.get('summary', '')}"
+        )
+
     # ── 工具注册（含 function calling schema）──
 
     return [
@@ -242,6 +361,27 @@ def _make_tools(state: AnalysisState) -> list[Tool]:
         Tool("fetch_news", "获取公司近期新闻",
              {"type": "object", "properties": {"name": {"type": "string", "description": "公司名称,默认当前公司"}}, "required": []},
              fetch_news),
+        Tool("fetch_announcements", "获取近期公告/公告摘要（带来源元信息）",
+             {"type": "object", "properties": {"limit": {"type": "integer", "description": "返回条数,默认5"}}, "required": []},
+             fetch_announcements_tool),
+        Tool("fetch_live_quotes", "获取实时行情快照与估值相关字段（带来源元信息）",
+             {"type": "object", "properties": {}, "required": []},
+             fetch_live_quotes_tool),
+        Tool("fetch_exchange_filings", "获取交易所文件/披露线索（带来源元信息）",
+             {"type": "object", "properties": {"limit": {"type": "integer", "description": "返回条数,默认5"}}, "required": []},
+             fetch_exchange_filings_tool),
+        Tool("fetch_broker_reports", "获取东方财富券商研报列表，失败后回退新闻观点来源",
+             {"type": "object", "properties": {"limit": {"type": "integer", "description": "返回条数,默认3"}}, "required": []},
+             fetch_broker_reports_tool),
+        Tool("fetch_fund_holdings", "获取基金持仓/机构持股线索（带来源元信息）",
+             {"type": "object", "properties": {"limit": {"type": "integer", "description": "返回条数,默认5"}}, "required": []},
+             fetch_fund_holdings_tool),
+        Tool("extract_document_tables", "提取已上传文档中的结构化表格摘要",
+             {"type": "object", "properties": {"source_id": {"type": "string", "description": "文档 source_id，默认取第一份"}}, "required": []},
+             extract_document_tables_tool),
+        Tool("extract_document_summary", "提取已上传文档的文本摘要与解析状态",
+             {"type": "object", "properties": {"source_id": {"type": "string", "description": "文档 source_id，默认取第一份"}}, "required": []},
+             extract_document_summary_tool),
         Tool("dupont_analysis", "执行杜邦分析：将ROE分解为净利率×资产周转率×权益乘数",
              {"type": "object", "properties": {}, "required": []},
              run_dupont_analysis, cacheable=False),

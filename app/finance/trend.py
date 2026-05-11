@@ -140,7 +140,7 @@ def trend_summary(trends: list[TrendResult]) -> str:
 
 
 def get_chart_data(trends: list[TrendResult]) -> dict[str, dict]:
-    """返回供 Streamlit 前端渲染的图表数据"""
+    """返回供前端渲染的图表数据"""
     return {
         t.metric_name: {
             "periods": list(t.periods),
