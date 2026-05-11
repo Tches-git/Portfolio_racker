@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
 from app.config import OUTPUT_DIR
 from app.tracking.models import MarketEvent
+
+VALID_EVENT_STATUSES = {"new", "reviewed", "ignored", "converted_to_report"}
 
 
 def save_events(events: list[MarketEvent], *, output_dir: Path = OUTPUT_DIR) -> None:
@@ -16,6 +19,7 @@ def save_events(events: list[MarketEvent], *, output_dir: Path = OUTPUT_DIR) -> 
     current = {event.event_id: event for event in load_events(output_dir=output_dir)}
     for event in events:
         if event.event_id:
+            _preserve_existing_status(event, current.get(event.event_id))
             current[event.event_id] = event
     ordered = sorted(current.values(), key=lambda item: item.published_at or item.collected_at, reverse=True)
     _save(ordered, output_dir=output_dir)
@@ -43,6 +47,7 @@ def query_events(
     impact_level: str = "",
     start: str = "",
     end: str = "",
+    status: str = "",
     limit: int = 100,
     output_dir: Path = OUTPUT_DIR,
 ) -> list[MarketEvent]:
@@ -58,6 +63,8 @@ def query_events(
             continue
         if impact_level and event.impact_level != impact_level:
             continue
+        if status and status != "all" and event.status != status:
+            continue
         if start and event_time and event_time < start:
             continue
         if end and event_time and event_time > end:
@@ -71,6 +78,33 @@ def get_event(event_id: str, *, output_dir: Path = OUTPUT_DIR) -> MarketEvent | 
         if event.event_id == event_id:
             return event
     return None
+
+
+def update_event_status(event_id: str, status: str, *, note: str = "", output_dir: Path = OUTPUT_DIR) -> MarketEvent | None:
+    """更新事件处理状态并持久化。"""
+    normalized_status = normalize_event_status(status)
+    events = load_events(output_dir=output_dir)
+    updated: MarketEvent | None = None
+    now = datetime.now().isoformat(timespec="seconds")
+    for event in events:
+        if event.event_id != event_id:
+            continue
+        event.status = normalized_status
+        event.status_updated_at = now
+        event.status_note = note.strip()
+        updated = event
+        break
+    if updated is None:
+        return None
+    _save(events, output_dir=output_dir)
+    return updated
+
+
+def normalize_event_status(status: str) -> str:
+    normalized = str(status or "").strip()
+    if normalized not in VALID_EVENT_STATUSES:
+        raise ValueError(f"unsupported event status: {status}")
+    return normalized
 
 
 def _history_path(output_dir: Path) -> Path:
@@ -108,4 +142,17 @@ def _event_from_dict(item: dict) -> MarketEvent:
         related_sources=list(item.get("related_sources", []) or []),
         is_duplicate=bool(item.get("is_duplicate", False)),
         parent_event_id=str(item.get("parent_event_id", "")),
+        status=str(item.get("status", "new") or "new"),
+        status_updated_at=str(item.get("status_updated_at", "")),
+        status_note=str(item.get("status_note", "")),
     )
+
+
+def _preserve_existing_status(event: MarketEvent, existing: MarketEvent | None) -> None:
+    if existing is None or existing.status == "new":
+        return
+    if event.status != "new":
+        return
+    event.status = existing.status
+    event.status_updated_at = existing.status_updated_at
+    event.status_note = existing.status_note

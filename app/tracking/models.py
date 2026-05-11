@@ -31,6 +31,9 @@ class MarketEvent:
     related_sources: list[dict[str, str]] = field(default_factory=list)
     is_duplicate: bool = False
     parent_event_id: str = ""
+    status: str = "new"
+    status_updated_at: str = ""
+    status_note: str = ""
 
 
 @dataclass
@@ -89,3 +92,4 @@ class Watchlist:
     description: str = ""
     created_at: str = ""
     updated_at: str = ""
+    last_refreshed_at: str = ""

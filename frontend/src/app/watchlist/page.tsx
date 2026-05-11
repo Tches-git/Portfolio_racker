@@ -51,8 +51,8 @@ export default async function WatchlistPage() {
                 <div className="card" key={watchlist.watchlist_id}>
                   <div className="heroTop">
                     <div>
-                      <div className="itemTitle">{watchlist.name}</div>
-                      <div className="inlineMeta">{watchlist.description || '暂无说明'} · {watchlist.updated_at || watchlist.created_at}</div>
+                      <Link className="itemTitle" href={`/watchlist/${watchlist.watchlist_id}`}>{watchlist.name}</Link>
+                      <div className="inlineMeta">{watchlist.description || '暂无说明'} · 最近刷新 {watchlist.last_refreshed_at || '尚未手动刷新'}</div>
                     </div>
                     <span className="tag">{watchlist.stock_codes.length} 只股票</span>
                   </div>
@@ -66,7 +66,8 @@ export default async function WatchlistPage() {
                     <div className="metricCard"><div className="statusLabel">降级</div><div className="metricCardValue">{summary.events.placeholder_count}</div><div className="inlineMeta">需复核</div></div>
                   </div>
                   <div className="actionList compactActions">
-                    <Link className="downloadLink" href={`/events?stock=${watchlist.stock_codes[0]}`}>查看首只股票事件</Link>
+                    <Link className="downloadLink" href={`/watchlist/${watchlist.watchlist_id}`}>打开组合详情</Link>
+                    <Link className="downloadLink" href={`/events?stock_codes=${stockQuery}&mode=history`}>查看组合事件</Link>
                     <Link className="downloadLink" href={`/alerts?stock_codes=${stockQuery}`}>处理组合预警</Link>
                     <Link className="downloadLink" href={`/briefing?stock_codes=${stockQuery}`}>生成组合简报</Link>
                   </div>

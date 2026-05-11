@@ -52,7 +52,7 @@ def build_tracking_alerts(collection: EventCollection, *, limit: int = 20) -> li
 def _alert(event: MarketEvent, *, alert_type: str, severity: str, title: str, message: str, suggested_action: str) -> TrackingAlert:
     raw = f"{event.event_id}:{alert_type}:{severity}"
     alert_id = md5(raw.encode("utf-8", errors="ignore")).hexdigest()[:16]
-    return TrackingAlert(
+    alert = TrackingAlert(
         alert_id=alert_id,
         stock_code=event.stock_code,
         event_id=event.event_id,
@@ -64,3 +64,6 @@ def _alert(event: MarketEvent, *, alert_type: str, severity: str, title: str, me
         created_at=datetime.now().isoformat(timespec="seconds"),
         suggested_action=suggested_action,
     )
+    if event.status != "new":
+        alert.status = event.status
+    return alert

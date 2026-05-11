@@ -7,15 +7,24 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_events_page_uses_tracking_api_contract():
     page = (ROOT / "frontend/src/app/events/page.tsx").read_text(encoding="utf-8")
+    detail_page = (ROOT / "frontend/src/app/events/[eventId]/page.tsx").read_text(encoding="utf-8")
+    status_controls = (ROOT / "frontend/src/components/event-status-controls.tsx").read_text(encoding="utf-8")
     api = (ROOT / "frontend/src/lib/api.ts").read_text(encoding="utf-8")
     types = (ROOT / "frontend/src/lib/types.ts").read_text(encoding="utf-8")
 
     assert "金融事件追踪" in page
     assert "fetchMarketEvents" in page
+    assert "status=new" in page
+    assert "EventStatusControls" in page
+    assert "EventStatusControls" in detail_page
+    assert "updateEventStatus" in status_controls
     assert "/api/v1/events" in api
+    assert "/api/v1/events/${eventId}/status" in api
     assert "mode=history" in page
+    assert "stock_codes" in page
     assert "MarketEventListResponse" in types
     assert "high_impact_count" in types
+    assert "converted_to_report" in types
 
 
 def test_stock_timeline_page_and_nav_are_wired():
@@ -27,6 +36,10 @@ def test_stock_timeline_page_and_nav_are_wired():
     assert "fetchStockEvents" in timeline_page
     assert "事件时间线" in timeline_page
     assert "fetchStockEvents" in stock_page
+    assert "fetchWatchlists" in stock_page
+    assert "所属组合" in stock_page
+    assert "事件详情" in stock_page
+    assert "今日简报" in stock_page
     assert "/timeline" in sidebar
     assert "timeline" in workspace_nav
 

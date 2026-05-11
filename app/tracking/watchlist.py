@@ -21,6 +21,14 @@ def list_watchlists(*, output_dir: Path = OUTPUT_DIR) -> list[Watchlist]:
     return [_default_watchlist()]
 
 
+def get_watchlist(watchlist_id: str, *, output_dir: Path = OUTPUT_DIR) -> Watchlist | None:
+    """按 ID 查找组合，包含未持久化的默认组合。"""
+    for item in list_watchlists(output_dir=output_dir):
+        if item.watchlist_id == watchlist_id:
+            return item
+    return None
+
+
 def create_watchlist(name: str, stock_codes: list[str], *, description: str = "", output_dir: Path = OUTPUT_DIR) -> Watchlist:
     codes = normalize_stock_codes(stock_codes)
     now = datetime.now().isoformat(timespec="seconds")
@@ -31,11 +39,30 @@ def create_watchlist(name: str, stock_codes: list[str], *, description: str = ""
         description=description.strip(),
         created_at=now,
         updated_at=now,
+        last_refreshed_at="",
     )
     items = _load_watchlists(output_dir=output_dir)
     items.append(watchlist)
     _save_watchlists(items, output_dir=output_dir)
     return watchlist
+
+
+def mark_watchlist_refreshed(watchlist_id: str, *, output_dir: Path = OUTPUT_DIR) -> Watchlist | None:
+    """记录组合最近一次手动刷新时间。"""
+    now = datetime.now().isoformat(timespec="seconds")
+    items = list_watchlists(output_dir=output_dir)
+    updated: Watchlist | None = None
+    for item in items:
+        if item.watchlist_id != watchlist_id:
+            continue
+        item.updated_at = now
+        item.last_refreshed_at = now
+        updated = item
+        break
+    if updated is None:
+        return None
+    _save_watchlists(items, output_dir=output_dir)
+    return updated
 
 
 def normalize_stock_codes(stock_codes: list[str]) -> list[str]:
@@ -60,6 +87,7 @@ def _default_watchlist() -> Watchlist:
         description="由历史研究记录和内置核心股票生成，适合作为金融事件追踪起点。",
         created_at=now,
         updated_at=now,
+        last_refreshed_at="",
     )
 
 
@@ -94,6 +122,7 @@ def _load_watchlists(*, output_dir: Path) -> list[Watchlist]:
             description=str(item.get("description", "")),
             created_at=str(item.get("created_at", "")),
             updated_at=str(item.get("updated_at", "")),
+            last_refreshed_at=str(item.get("last_refreshed_at", "")),
         )
         for item in items
         if isinstance(item, dict)

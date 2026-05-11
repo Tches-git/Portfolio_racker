@@ -39,6 +39,9 @@ export type MarketEvent = {
   related_sources: Array<{ title: string; source: string; provider: string; url: string; time: string }>
   is_duplicate: boolean
   parent_event_id: string
+  status: 'new' | 'reviewed' | 'ignored' | 'converted_to_report'
+  status_updated_at: string
+  status_note: string
 }
 
 export type MarketEventListResponse = {
@@ -99,11 +102,40 @@ export type Watchlist = {
   description: string
   created_at: string
   updated_at: string
+  last_refreshed_at: string
 }
 
 export type WatchlistListResponse = {
   items: Watchlist[]
   total: number
+}
+
+export type WatchlistImpactStock = {
+  stock_code: string
+  stock_name: string
+  event_count: number
+  high_impact_count: number
+  latest_event_at: string
+}
+
+export type WatchlistSummary = {
+  stock_count: number
+  event_count: number
+  high_impact_count: number
+  alert_count: number
+  high_severity_count: number
+  source_count: number
+  placeholder_count: number
+  last_refreshed_at: string
+  impacted_stocks: WatchlistImpactStock[]
+}
+
+export type WatchlistDetailResponse = {
+  watchlist: Watchlist
+  events: MarketEventListResponse
+  alerts: TrackingAlertListResponse
+  briefing: DailyBriefingResponse
+  summary: WatchlistSummary
 }
 
 export type WatchlistCreateRequest = {

@@ -8,14 +8,15 @@ from fastapi.responses import FileResponse
 from app.api.download import ExportNotFoundError, resolve_export_file
 from app.api.mappers import build_health_response, map_history_record
 from app.api.run_manager import RunActionError, RunNotFoundError, run_manager
-from app.api.schemas import AnalysisRunCreateRequest, AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateRequest, BatchRunCreateResponse, DailyBriefingResponse, EventAnalyzeRequest, HealthResponse, LatestReportResponse, MarketEventDTO, MarketEventListResponse, OpsMetricsResponse, ReportDiffResponse, RunAssignmentRequest, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, StoreBackupResponse, StoreHealthResponse, TrackingAlertDTO, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDTO, WatchlistListResponse, WorkspaceStocksResponse
+from app.api.schemas import AnalysisRunCreateRequest, AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateRequest, BatchRunCreateResponse, DailyBriefingResponse, EventAnalyzeRequest, EventStatusUpdateRequest, HealthResponse, LatestReportResponse, MarketEventDTO, MarketEventListResponse, OpsMetricsResponse, ReportDiffResponse, RunAssignmentRequest, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, StoreBackupResponse, StoreHealthResponse, TrackingAlertDTO, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDTO, WatchlistDetailResponse, WatchlistImpactStockDTO, WatchlistListResponse, WatchlistSummaryDTO, WorkspaceStocksResponse
 from app.api.services import NotFoundError, get_latest_report, get_stock_history
 from app.data_source.akshare_client import get_recent_news
 from app.memory.store import get_memory_store
-from app.tracking.service import collect_historical_events, collect_market_events, collect_stock_events, find_market_event
+from app.tracking.service import collect_historical_events, collect_market_events, collect_stock_events, find_market_event, summarize_events
+from app.tracking.history import save_events, update_event_status
 from app.tracking.alerts import build_tracking_alerts
 from app.tracking.briefing import build_daily_briefing
-from app.tracking.watchlist import create_watchlist, list_watchlists
+from app.tracking.watchlist import create_watchlist, get_watchlist, list_watchlists, mark_watchlist_refreshed
 
 app = FastAPI(title="AI Research Assistant API", version="0.1.0")
 app.add_middleware(
@@ -33,6 +34,102 @@ app.add_middleware(
 
 def _actor(actor: str = Header(default='system', alias='X-Actor'), role: str = Header(default='admin', alias='X-Role')) -> tuple[str, str]:
     return actor or 'system', role or 'viewer'
+
+
+def _market_event_list_response(collection, *, mode: str = "realtime") -> MarketEventListResponse:
+    return MarketEventListResponse(
+        items=[MarketEventDTO(**event.__dict__) for event in collection.items],
+        total=collection.total,
+        high_impact_count=collection.high_impact_count,
+        placeholder_count=collection.placeholder_count,
+        duplicate_count=collection.duplicate_count,
+        source_count=collection.source_count,
+        mode=mode,
+    )
+
+
+def _tracking_alert_list_response(alerts) -> TrackingAlertListResponse:
+    return TrackingAlertListResponse(
+        items=[TrackingAlertDTO(**alert.__dict__) for alert in alerts],
+        total=len(alerts),
+        high_severity_count=sum(1 for alert in alerts if alert.severity == "high"),
+        risk_alert_count=sum(1 for alert in alerts if alert.alert_type == "risk_watch"),
+        source_degraded_count=sum(1 for alert in alerts if alert.alert_type == "source_degraded"),
+    )
+
+
+def _filter_alerts_by_status(alerts, status: str):
+    normalized = status or "open"
+    if normalized == "all":
+        return alerts
+    return [alert for alert in alerts if alert.status == normalized]
+
+
+def _daily_briefing_response(briefing) -> DailyBriefingResponse:
+    return DailyBriefingResponse(
+        title=briefing.title,
+        summary=briefing.summary,
+        generated_at=briefing.generated_at,
+        total_events=briefing.total_events,
+        high_impact_count=briefing.high_impact_count,
+        negative_event_count=briefing.negative_event_count,
+        source_count=briefing.source_count,
+        key_events=[MarketEventDTO(**event.__dict__) for event in briefing.key_events],
+        alerts=[TrackingAlertDTO(**alert.__dict__) for alert in briefing.alerts],
+        suggested_actions=briefing.suggested_actions,
+        themes=briefing.themes,
+        review_required_events=[MarketEventDTO(**event.__dict__) for event in briefing.review_required_events],
+    )
+
+
+def _watchlist_detail_response(watchlist, collection, *, mode: str = "history") -> WatchlistDetailResponse:
+    alerts = _filter_alerts_by_status(build_tracking_alerts(collection), "open")
+    briefing = build_daily_briefing(collection, title=f"{watchlist.name} 组合简报")
+    alert_response = _tracking_alert_list_response(alerts)
+    impacted_stocks = _rank_impacted_stocks(collection.items)
+    summary = WatchlistSummaryDTO(
+        stock_count=len(watchlist.stock_codes),
+        event_count=collection.total,
+        high_impact_count=collection.high_impact_count,
+        alert_count=alert_response.total,
+        high_severity_count=alert_response.high_severity_count,
+        source_count=collection.source_count,
+        placeholder_count=collection.placeholder_count,
+        last_refreshed_at=watchlist.last_refreshed_at,
+        impacted_stocks=impacted_stocks,
+    )
+    return WatchlistDetailResponse(
+        watchlist=WatchlistDTO(**watchlist.__dict__),
+        events=_market_event_list_response(collection, mode=mode),
+        alerts=alert_response,
+        briefing=_daily_briefing_response(briefing),
+        summary=summary,
+    )
+
+
+def _rank_impacted_stocks(events) -> list[WatchlistImpactStockDTO]:
+    grouped: dict[str, dict[str, object]] = {}
+    for event in events:
+        code = event.stock_code
+        if not code:
+            continue
+        event_time = event.published_at or event.collected_at
+        current = grouped.setdefault(
+            code,
+            {"stock_code": code, "stock_name": event.stock_name, "event_count": 0, "high_impact_count": 0, "latest_event_at": ""},
+        )
+        current["event_count"] = int(current["event_count"]) + 1
+        current["stock_name"] = current["stock_name"] or event.stock_name
+        if event.impact_level == "high":
+            current["high_impact_count"] = int(current["high_impact_count"]) + 1
+        if event_time and event_time > str(current["latest_event_at"]):
+            current["latest_event_at"] = event_time
+    ranked = sorted(
+        grouped.values(),
+        key=lambda item: (int(item["high_impact_count"]), int(item["event_count"]), str(item["latest_event_at"])),
+        reverse=True,
+    )
+    return [WatchlistImpactStockDTO(**item) for item in ranked]
 
 
 @app.get("/api/v1/health", response_model=HealthResponse)
@@ -70,6 +167,7 @@ def market_events(
     provider: str = "",
     event_type: str = "",
     impact_level: str = "",
+    status: str = "",
     start: str = "",
     end: str = "",
 ) -> MarketEventListResponse:
@@ -81,21 +179,16 @@ def market_events(
             provider=provider,
             event_type=event_type,
             impact_level=impact_level,
+            status=status,
             start=start,
             end=end,
             limit=max(1, min(limit_per_stock * max(1, len(codes or []), 4), 120)),
         )
     else:
         collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
-    return MarketEventListResponse(
-        items=[MarketEventDTO(**event.__dict__) for event in collection.items],
-        total=collection.total,
-        high_impact_count=collection.high_impact_count,
-        placeholder_count=collection.placeholder_count,
-        duplicate_count=collection.duplicate_count,
-        source_count=collection.source_count,
-        mode=normalized_mode,
-    )
+        if status and status != "all":
+            collection = summarize_events([event for event in collection.items if event.status == status])
+    return _market_event_list_response(collection, mode=normalized_mode)
 
 
 @app.get("/api/v1/events/{event_id}", response_model=MarketEventDTO)
@@ -105,6 +198,21 @@ def event_detail(event_id: str, stock_codes: str = "") -> MarketEventDTO:
     if event is None:
         raise HTTPException(status_code=404, detail=f"未找到事件: {event_id}")
     return MarketEventDTO(**event.__dict__)
+
+
+@app.patch("/api/v1/events/{event_id}/status", response_model=MarketEventDTO)
+def update_market_event_status(event_id: str, payload: EventStatusUpdateRequest) -> MarketEventDTO:
+    event = find_market_event(event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail=f"未找到事件: {event_id}")
+    save_events([event])
+    try:
+        updated = update_event_status(event_id, payload.status, note=payload.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"未找到事件: {event_id}")
+    return MarketEventDTO(**updated.__dict__)
 
 
 @app.post("/api/v1/events/{event_id}/analyze", response_model=AnalysisRunResponse, status_code=202)
@@ -127,6 +235,8 @@ def analyze_event(
         "note": payload.note if payload else "",
     }
     run = run_manager.start_event_run(event.stock_code, event_context=context, actor=actor, role=role)
+    save_events([event])
+    update_event_status(event.event_id, "converted_to_report", note=payload.note if payload else "已触发事件研报任务")
     return run_manager.get_run_response(run.run_id)
 
 
@@ -148,17 +258,11 @@ def stock_events(stock_code: str, limit: int = 6) -> StockEventTimelineResponse:
 
 
 @app.get("/api/v1/alerts", response_model=TrackingAlertListResponse)
-def tracking_alerts(stock_codes: str = "", limit_per_stock: int = 4) -> TrackingAlertListResponse:
+def tracking_alerts(stock_codes: str = "", limit_per_stock: int = 4, status: str = "open") -> TrackingAlertListResponse:
     codes = [part.strip() for part in stock_codes.split(",") if part.strip()] if stock_codes else None
     collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
-    alerts = build_tracking_alerts(collection)
-    return TrackingAlertListResponse(
-        items=[TrackingAlertDTO(**alert.__dict__) for alert in alerts],
-        total=len(alerts),
-        high_severity_count=sum(1 for alert in alerts if alert.severity == "high"),
-        risk_alert_count=sum(1 for alert in alerts if alert.alert_type == "risk_watch"),
-        source_degraded_count=sum(1 for alert in alerts if alert.alert_type == "source_degraded"),
-    )
+    alerts = _filter_alerts_by_status(build_tracking_alerts(collection), status)
+    return _tracking_alert_list_response(alerts)
 
 
 @app.get("/api/v1/briefing/daily", response_model=DailyBriefingResponse)
@@ -192,6 +296,28 @@ def watchlists() -> WatchlistListResponse:
 def create_tracking_watchlist(payload: WatchlistCreateRequest) -> WatchlistDTO:
     item = create_watchlist(payload.name, payload.stock_codes, description=payload.description)
     return WatchlistDTO(**item.__dict__)
+
+
+@app.get("/api/v1/watchlists/{watchlist_id}", response_model=WatchlistDetailResponse)
+def watchlist_detail(watchlist_id: str) -> WatchlistDetailResponse:
+    item = get_watchlist(watchlist_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"未找到组合: {watchlist_id}")
+    collection = collect_historical_events(stock_codes=item.stock_codes, limit=80)
+    return _watchlist_detail_response(item, collection, mode="history")
+
+
+@app.post("/api/v1/watchlists/{watchlist_id}/refresh", response_model=WatchlistDetailResponse, status_code=202)
+def refresh_watchlist_events(watchlist_id: str, limit_per_stock: int = 4) -> WatchlistDetailResponse:
+    item = get_watchlist(watchlist_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"未找到组合: {watchlist_id}")
+    collection = collect_market_events(
+        stock_codes=item.stock_codes,
+        limit_per_stock=max(1, min(limit_per_stock, 8)),
+    )
+    updated = mark_watchlist_refreshed(watchlist_id) or item
+    return _watchlist_detail_response(updated, collection, mode="realtime")
 
 
 @app.get("/api/v1/workspace/stocks", response_model=WorkspaceStocksResponse)

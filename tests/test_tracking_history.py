@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.tracking.history import get_event, query_events, save_events
+from app.tracking.history import get_event, query_events, save_events, update_event_status
 from app.tracking.models import MarketEvent
 from app.tracking.normalizer import infer_event_type
 
@@ -27,6 +27,29 @@ def test_query_events_filters_history(tmp_path):
     events = query_events(event_type="earnings", impact_level="high", output_dir=tmp_path)
 
     assert [event.event_id for event in events] == ["e1"]
+
+
+def test_event_status_update_persists_and_filters(tmp_path):
+    save_events([MarketEvent(event_id="e1", stock_code="600519", title="待处理事件")], output_dir=tmp_path)
+
+    updated = update_event_status("e1", "reviewed", note="已人工复核", output_dir=tmp_path)
+
+    assert updated is not None
+    assert updated.status == "reviewed"
+    assert updated.status_note == "已人工复核"
+    assert query_events(status="reviewed", output_dir=tmp_path)[0].event_id == "e1"
+
+
+def test_save_events_preserves_existing_event_status(tmp_path):
+    save_events([MarketEvent(event_id="e1", stock_code="600519", title="原事件")], output_dir=tmp_path)
+    update_event_status("e1", "ignored", output_dir=tmp_path)
+
+    save_events([MarketEvent(event_id="e1", stock_code="600519", title="实时刷新事件")], output_dir=tmp_path)
+
+    event = get_event("e1", output_dir=tmp_path)
+    assert event is not None
+    assert event.title == "实时刷新事件"
+    assert event.status == "ignored"
 
 
 def test_infer_event_type_covers_platform_categories():

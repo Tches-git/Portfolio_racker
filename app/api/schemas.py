@@ -176,6 +176,9 @@ class MarketEventDTO(BaseModel):
     related_sources: list[dict[str, str]] = Field(default_factory=list)
     is_duplicate: bool = False
     parent_event_id: str = ""
+    status: str = "new"
+    status_updated_at: str = ""
+    status_note: str = ""
 
 
 class MarketEventListResponse(BaseModel):
@@ -236,11 +239,40 @@ class WatchlistDTO(BaseModel):
     description: str = ""
     created_at: str = ""
     updated_at: str = ""
+    last_refreshed_at: str = ""
 
 
 class WatchlistListResponse(BaseModel):
     items: list[WatchlistDTO] = Field(default_factory=list)
     total: int = 0
+
+
+class WatchlistImpactStockDTO(BaseModel):
+    stock_code: str
+    stock_name: str = ""
+    event_count: int = 0
+    high_impact_count: int = 0
+    latest_event_at: str = ""
+
+
+class WatchlistSummaryDTO(BaseModel):
+    stock_count: int = 0
+    event_count: int = 0
+    high_impact_count: int = 0
+    alert_count: int = 0
+    high_severity_count: int = 0
+    source_count: int = 0
+    placeholder_count: int = 0
+    last_refreshed_at: str = ""
+    impacted_stocks: list[WatchlistImpactStockDTO] = Field(default_factory=list)
+
+
+class WatchlistDetailResponse(BaseModel):
+    watchlist: WatchlistDTO
+    events: MarketEventListResponse = Field(default_factory=MarketEventListResponse)
+    alerts: TrackingAlertListResponse = Field(default_factory=TrackingAlertListResponse)
+    briefing: DailyBriefingResponse = Field(default_factory=DailyBriefingResponse)
+    summary: WatchlistSummaryDTO = Field(default_factory=WatchlistSummaryDTO)
 
 
 class WatchlistCreateRequest(BaseModel):
@@ -250,6 +282,11 @@ class WatchlistCreateRequest(BaseModel):
 
 
 class EventAnalyzeRequest(BaseModel):
+    note: str = ""
+
+
+class EventStatusUpdateRequest(BaseModel):
+    status: str = Field(min_length=1)
     note: str = ""
 
 

@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import { EventAnalyzeButton } from '../../../components/event-analyze-button'
+import { EventStatusControls } from '../../../components/event-status-controls'
 import { fetchEventDetail } from '../../../lib/api'
 
 function sentimentText(sentiment: string) {
@@ -54,6 +55,17 @@ export default async function EventDetailPage({ params }: { params: Promise<{ ev
         <div className="metricCard"><div className="statusLabel">影响等级</div><div className="metricCardValue">{event.impact_level}</div><div className="inlineMeta">{event.impact_scope}</div></div>
         <div className="metricCard"><div className="statusLabel">置信度</div><div className="metricCardValue">{(event.confidence * 100).toFixed(0)}%</div><div className="inlineMeta">{sentimentText(event.sentiment)}</div></div>
       </div>
+
+      <section className="panel">
+        <div className="sectionHead">
+          <div>
+            <div className="sectionEyebrow">Workflow</div>
+            <h2>处理状态</h2>
+          </div>
+        </div>
+        <EventStatusControls eventId={event.event_id} status={event.status} />
+        {event.status_updated_at ? <div className="inlineMeta">最近更新：{event.status_updated_at} · {event.status_note || '无备注'}</div> : null}
+      </section>
 
       <div className="grid">
         <section className="panel span-7">

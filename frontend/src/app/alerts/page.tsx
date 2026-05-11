@@ -2,6 +2,7 @@ import Link from 'next/link'
 
 import { fetchTrackingAlerts } from '../../lib/api'
 import { EventAnalyzeButton } from '../../components/event-analyze-button'
+import { EventStatusControls } from '../../components/event-status-controls'
 
 function severityTone(severity: string) {
   if (severity === 'high') return 'tagNegative'
@@ -9,10 +10,17 @@ function severityTone(severity: string) {
   return ''
 }
 
-export default async function AlertsPage({ searchParams }: { searchParams?: Promise<{ stock_codes?: string }> }) {
+function alertEventStatus(status: string): 'new' | 'reviewed' | 'ignored' | 'converted_to_report' {
+  if (status === 'reviewed' || status === 'ignored' || status === 'converted_to_report') return status
+  return 'new'
+}
+
+export default async function AlertsPage({ searchParams }: { searchParams?: Promise<{ stock_codes?: string; status?: string }> }) {
   const params = await searchParams
   const stockCodes = params?.stock_codes ? params.stock_codes.split(',').map((item) => item.trim()).filter(Boolean) : []
-  const alerts = await fetchTrackingAlerts(stockCodes, 4).catch(() => ({ items: [], total: 0, high_severity_count: 0, risk_alert_count: 0, source_degraded_count: 0 }))
+  const status = params?.status || 'open'
+  const stockQuery = stockCodes.length ? `stock_codes=${stockCodes.join(',')}&` : ''
+  const alerts = await fetchTrackingAlerts(stockCodes, 4, status).catch(() => ({ items: [], total: 0, high_severity_count: 0, risk_alert_count: 0, source_degraded_count: 0 }))
 
   return (
     <main>
@@ -38,8 +46,15 @@ export default async function AlertsPage({ searchParams }: { searchParams?: Prom
         <div className="sectionHead">
           <div>
             <div className="sectionEyebrow">Open Alerts</div>
-            <h2>待处理预警</h2>
+            <h2>{status === 'open' ? '待处理预警' : '预警处理记录'}</h2>
           </div>
+        </div>
+        <div className="filterBar">
+          <Link className={`filterChip${status === 'open' ? ' filterChipActive' : ''}`} href={`/alerts?${stockQuery}status=open`}>待处理</Link>
+          <Link className={`filterChip${status === 'reviewed' ? ' filterChipActive' : ''}`} href={`/alerts?${stockQuery}status=reviewed`}>已复核</Link>
+          <Link className={`filterChip${status === 'ignored' ? ' filterChipActive' : ''}`} href={`/alerts?${stockQuery}status=ignored`}>已忽略</Link>
+          <Link className={`filterChip${status === 'converted_to_report' ? ' filterChipActive' : ''}`} href={`/alerts?${stockQuery}status=converted_to_report`}>已转研报</Link>
+          <Link className={`filterChip${status === 'all' ? ' filterChipActive' : ''}`} href={`/alerts?${stockQuery}status=all`}>全部</Link>
         </div>
         <div className="detailGrid">
           {alerts.items.map((alert) => (
@@ -49,10 +64,14 @@ export default async function AlertsPage({ searchParams }: { searchParams?: Prom
                   <div className="itemTitle">{alert.title}</div>
                   <div className="inlineMeta">{alert.stock_code} · {alert.alert_type} · {alert.created_at}</div>
                 </div>
-                <span className={`tag ${severityTone(alert.severity)}`}>{alert.severity}</span>
+                <div className="chipRow">
+                  <span className={`tag ${severityTone(alert.severity)}`}>{alert.severity}</span>
+                  <span className="tag">{alert.status}</span>
+                </div>
               </div>
               <p className="bodyText">{alert.message}</p>
               <div className="selectionHint">{alert.suggested_action}</div>
+              <EventStatusControls eventId={alert.event_id} status={alertEventStatus(alert.status)} />
               <div className="actionList compactActions">
                 <Link className="downloadLink" href={`/stocks/${alert.stock_code}/timeline`}>查看事件时间线</Link>
                 <Link className="downloadLink" href={`/events/${alert.event_id}`}>查看事件详情</Link>

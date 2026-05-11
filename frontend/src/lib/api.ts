@@ -1,4 +1,4 @@
-import type { AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateResponse, DailyBriefingResponse, LatestReportResponse, MarketEvent, MarketEventListResponse, ReportDiffResponse, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistListResponse, Watchlist, WorkspaceStocksResponse } from './types'
+import type { AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateResponse, DailyBriefingResponse, LatestReportResponse, MarketEvent, MarketEventListResponse, ReportDiffResponse, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDetailResponse, WatchlistListResponse, Watchlist, WorkspaceStocksResponse } from './types'
 
 export const API_BASE = typeof window === 'undefined'
   ? process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000'
@@ -24,11 +24,12 @@ export async function fetchStockNews(stockCode: string, limit = 8): Promise<Stoc
   return res.json()
 }
 
-export async function fetchMarketEvents(stockCodes: string[] = [], limitPerStock = 4, mode = 'realtime'): Promise<MarketEventListResponse> {
+export async function fetchMarketEvents(stockCodes: string[] = [], limitPerStock = 4, mode = 'realtime', status = ''): Promise<MarketEventListResponse> {
   const query = new URLSearchParams()
   if (stockCodes.length) query.set('stock_codes', stockCodes.join(','))
   query.set('limit_per_stock', String(limitPerStock))
   query.set('mode', mode)
+  if (status) query.set('status', status)
   const res = await fetch(`${API_BASE}/api/v1/events?${query.toString()}`, { cache: 'no-store' })
   if (!res.ok) {
     throw new Error('获取事件流失败')
@@ -50,6 +51,18 @@ export async function analyzeEvent(eventId: string): Promise<AnalysisRunResponse
   return res.json()
 }
 
+export async function updateEventStatus(eventId: string, status: MarketEvent['status'], note = ''): Promise<MarketEvent> {
+  const res = await fetch(`${API_BASE}/api/v1/events/${eventId}/status`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ status, note }),
+  })
+  if (!res.ok) {
+    throw new Error('更新事件状态失败')
+  }
+  return res.json()
+}
+
 export async function fetchStockEvents(stockCode: string, limit = 6): Promise<StockEventTimelineResponse> {
   const res = await fetch(`${API_BASE}/api/v1/stocks/${stockCode}/events?limit=${limit}`, { cache: 'no-store' })
   if (!res.ok) {
@@ -58,10 +71,11 @@ export async function fetchStockEvents(stockCode: string, limit = 6): Promise<St
   return res.json()
 }
 
-export async function fetchTrackingAlerts(stockCodes: string[] = [], limitPerStock = 4): Promise<TrackingAlertListResponse> {
+export async function fetchTrackingAlerts(stockCodes: string[] = [], limitPerStock = 4, status = 'open'): Promise<TrackingAlertListResponse> {
   const query = new URLSearchParams()
   if (stockCodes.length) query.set('stock_codes', stockCodes.join(','))
   query.set('limit_per_stock', String(limitPerStock))
+  if (status) query.set('status', status)
   const res = await fetch(`${API_BASE}/api/v1/alerts?${query.toString()}`, { cache: 'no-store' })
   if (!res.ok) {
     throw new Error('获取预警中心失败')
@@ -84,6 +98,20 @@ export async function fetchWatchlists(): Promise<WatchlistListResponse> {
   const res = await fetch(`${API_BASE}/api/v1/watchlists`, { cache: 'no-store' })
   if (!res.ok) {
     throw new Error('获取组合跟踪失败')
+  }
+  return res.json()
+}
+
+export async function fetchWatchlistDetail(watchlistId: string): Promise<WatchlistDetailResponse | null> {
+  const res = await fetch(`${API_BASE}/api/v1/watchlists/${encodeURIComponent(watchlistId)}`, { cache: 'no-store' })
+  if (!res.ok) return null
+  return res.json()
+}
+
+export async function refreshWatchlist(watchlistId: string): Promise<WatchlistDetailResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/watchlists/${encodeURIComponent(watchlistId)}/refresh`, { method: 'POST' })
+  if (!res.ok) {
+    throw new Error('刷新组合事件失败')
   }
   return res.json()
 }

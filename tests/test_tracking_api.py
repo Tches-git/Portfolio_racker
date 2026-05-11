@@ -31,12 +31,19 @@ def test_stock_events_endpoint_returns_timeline_contract(monkeypatch):
 
 def test_events_endpoint_supports_history_mode(monkeypatch):
     event = MarketEvent(event_id="h1", stock_code="600519", title="历史事件")
-    monkeypatch.setattr("app.api.server.collect_historical_events", lambda **kwargs: EventCollection(items=[event], total=1, source_count=1))
+    captured = {}
 
-    payload = TestClient(app).get("/api/v1/events?mode=history&stock_codes=600519").json()
+    def fake_collect(**kwargs):
+        captured.update(kwargs)
+        return EventCollection(items=[event], total=1, source_count=1)
+
+    monkeypatch.setattr("app.api.server.collect_historical_events", fake_collect)
+
+    payload = TestClient(app).get("/api/v1/events?mode=history&stock_codes=600519&status=new").json()
 
     assert payload["mode"] == "history"
     assert payload["items"][0]["event_id"] == "h1"
+    assert captured["status"] == "new"
 
 
 def test_event_detail_endpoint_returns_single_event(monkeypatch):
@@ -52,6 +59,8 @@ def test_event_detail_endpoint_returns_single_event(monkeypatch):
 def test_event_analyze_endpoint_starts_run(monkeypatch):
     event = MarketEvent(event_id="e4", stock_code="600519", title="重大公告", provider="cninfo")
     monkeypatch.setattr("app.api.server.find_market_event", lambda event_id, stock_codes=None: event)
+    monkeypatch.setattr("app.api.server.save_events", lambda events: None)
+    monkeypatch.setattr("app.api.server.update_event_status", lambda event_id, status, note="": event)
 
     class FakeRun:
         run_id = "run_event"
@@ -71,3 +80,18 @@ def test_event_analyze_endpoint_starts_run(monkeypatch):
 
     assert payload["run_id"] == "run_event"
     assert payload["stock_code"] == "600519"
+
+
+def test_event_status_endpoint_updates_event(monkeypatch):
+    event = MarketEvent(event_id="e5", stock_code="600519", title="待复核事件")
+    updated = MarketEvent(event_id="e5", stock_code="600519", title="待复核事件", status="reviewed", status_note="已看")
+    captured = {}
+    monkeypatch.setattr("app.api.server.find_market_event", lambda event_id, stock_codes=None: event)
+    monkeypatch.setattr("app.api.server.save_events", lambda events: captured.setdefault("saved", [item.event_id for item in events]))
+    monkeypatch.setattr("app.api.server.update_event_status", lambda event_id, status, note="": captured.update({"event_id": event_id, "status": status, "note": note}) or updated)
+
+    payload = TestClient(app).patch("/api/v1/events/e5/status", json={"status": "reviewed", "note": "已看"}).json()
+
+    assert captured["saved"] == ["e5"]
+    assert captured["status"] == "reviewed"
+    assert payload["status"] == "reviewed"

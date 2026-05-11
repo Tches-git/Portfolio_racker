@@ -7,12 +7,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_alerts_page_and_api_client_are_wired():
     page = (ROOT / "frontend/src/app/alerts/page.tsx").read_text(encoding="utf-8")
+    status_controls = (ROOT / "frontend/src/components/event-status-controls.tsx").read_text(encoding="utf-8")
     api = (ROOT / "frontend/src/lib/api.ts").read_text(encoding="utf-8")
     types = (ROOT / "frontend/src/lib/types.ts").read_text(encoding="utf-8")
     sidebar = (ROOT / "frontend/src/components/sidebar-nav.tsx").read_text(encoding="utf-8")
 
     assert "金融预警中心" in page
     assert "fetchTrackingAlerts" in page
+    assert "EventStatusControls" in page
+    assert "status=reviewed" in page
+    assert "标记已复核" in status_controls
     assert "/api/v1/alerts" in api
     assert "TrackingAlertListResponse" in types
     assert "/alerts" in sidebar

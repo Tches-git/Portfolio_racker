@@ -2,6 +2,7 @@ import Link from 'next/link'
 
 import { fetchMarketEvents } from '../../lib/api'
 import { EventAnalyzeButton } from '../../components/event-analyze-button'
+import { EventStatusBadge, EventStatusControls } from '../../components/event-status-controls'
 
 function impactTone(level: string) {
   if (level === 'high') return 'tagNegative'
@@ -16,11 +17,15 @@ function sentimentText(sentiment: string) {
   return '中性'
 }
 
-export default async function EventsPage({ searchParams }: { searchParams?: Promise<{ stock?: string; mode?: string }> }) {
+export default async function EventsPage({ searchParams }: { searchParams?: Promise<{ stock?: string; stock_codes?: string; mode?: string; status?: string }> }) {
   const params = await searchParams
-  const stocks = params?.stock ? [params.stock] : []
+  const stocks = params?.stock_codes
+    ? params.stock_codes.split(',').map((item) => item.trim()).filter(Boolean)
+    : params?.stock ? [params.stock] : []
   const mode = params?.mode === 'history' ? 'history' : 'realtime'
-  const events = await fetchMarketEvents(stocks, 4, mode).catch(() => ({ items: [], total: 0, high_impact_count: 0, placeholder_count: 0, duplicate_count: 0, source_count: 0, mode }))
+  const status = params?.status || ''
+  const stockQuery = stocks.length ? `stock_codes=${stocks.join(',')}&` : ''
+  const events = await fetchMarketEvents(stocks, 4, mode, status).catch(() => ({ items: [], total: 0, high_impact_count: 0, placeholder_count: 0, duplicate_count: 0, source_count: 0, mode }))
   const highImpact = events.items.filter((item) => item.impact_level === 'high')
 
   return (
@@ -55,6 +60,13 @@ export default async function EventsPage({ searchParams }: { searchParams?: Prom
               <h2>最新事件流</h2>
             </div>
           </div>
+          <div className="filterBar">
+            <Link className={`filterChip${!status ? ' filterChipActive' : ''}`} href={`/events?${stockQuery}mode=${mode}`}>全部</Link>
+            <Link className={`filterChip${status === 'new' ? ' filterChipActive' : ''}`} href={`/events?${stockQuery}mode=history&status=new`}>待处理</Link>
+            <Link className={`filterChip${status === 'reviewed' ? ' filterChipActive' : ''}`} href={`/events?${stockQuery}mode=history&status=reviewed`}>已复核</Link>
+            <Link className={`filterChip${status === 'ignored' ? ' filterChipActive' : ''}`} href={`/events?${stockQuery}mode=history&status=ignored`}>已忽略</Link>
+            <Link className={`filterChip${status === 'converted_to_report' ? ' filterChipActive' : ''}`} href={`/events?${stockQuery}mode=history&status=converted_to_report`}>已转研报</Link>
+          </div>
           <div className="timelineList">
             {events.items.map((event) => (
               <div className="timelineCard" key={event.event_id}>
@@ -65,7 +77,10 @@ export default async function EventsPage({ searchParams }: { searchParams?: Prom
                       <div className="itemTitle">{event.title}</div>
                       <div className="inlineMeta">{event.stock_code} · {event.event_type} · {event.provider || event.source} · {event.published_at || event.collected_at}</div>
                     </div>
-                    <span className={`tag ${impactTone(event.impact_level)}`}>{event.impact_level}</span>
+                    <div className="chipRow">
+                      <EventStatusBadge status={event.status} />
+                      <span className={`tag ${impactTone(event.impact_level)}`}>{event.impact_level}</span>
+                    </div>
                   </div>
                   <p className="bodyText">{event.summary || event.reason}</p>
                   <div className="chipRow">
@@ -76,6 +91,7 @@ export default async function EventsPage({ searchParams }: { searchParams?: Prom
                     <Link className="downloadLink" href={`/stocks/${event.stock_code}/timeline`}>股票时间线</Link>
                     <EventAnalyzeButton eventId={event.event_id} />
                   </div>
+                  <EventStatusControls eventId={event.event_id} status={event.status} />
                 </div>
               </div>
             ))}
