@@ -1,126 +1,78 @@
-# 📊 金融研报智能分析系统
+# Portfolio Tracker
 
-> 基于 **ReAct Agent + RAG** 的 A 股金融研报与消息追踪平台，支持 CLI、FastAPI + Next.js 产品前端、事件流、组合跟踪、预警中心、质量评测、消融实验、黄金集回归与质量门禁。
+[![quality-gate](https://github.com/Tches-git/Portfolio_racker/actions/workflows/quality-gate.yml/badge.svg)](https://github.com/Tches-git/Portfolio_racker/actions/workflows/quality-gate.yml)
 
----
+金融消息追踪与智能研报生成平台。项目把 A 股公告、行情、研报观点和风险舆情归一化为可追踪事件流，并在高影响事件出现时触发研究任务，形成“消息追踪 -> 风险预警 -> 每日简报 -> 研报更新”的闭环。
 
 ## 项目亮点
 
-- **完整分析链路**：输入股票代码后，自动完成数据采集、研究推理、RAG 增强写作与报告生成
-- **Phase 1 已接入可选多模态/在线来源升级链路**：支持附加 PDF / 图片 / 文本材料上传、CNInfo 公告/披露抓取 + 回退新闻来源、行情/来源证据展示，且默认股票代码主路径保持不变
-- **11+ 个金融分析工具**：覆盖杜邦分析、DCF + 蒙特卡洛估值、可比公司估值、趋势分析、风险识别及 Phase 1 在线来源工具
-- **质量与可信度导向**：内置规则评分、LLM-as-Judge、事实一致性检查、风险证据/传导、估值锚与数据降级披露指标
-- **双入口体验**：既可通过 `main.py` 统一 CLI 使用，也可通过 FastAPI + Next.js 产品前端进行交互式浏览
-- **金融消息追踪平台能力**：已覆盖事件追踪、事件详情、股票事件时间线、组合跟踪、预警中心、每日简报和事件触发研报更新入口；旧 Python Web 界面已移除
-- **工程化能力完整**：包含消融实验、固定黄金集回归、质量门禁、最小 GitHub Actions CI 样板
-- **测试覆盖完善**：覆盖研报生成、API、导出、事件追踪、组合跟踪、预警简报和前端契约
+| 能力 | 说明 |
+|------|------|
+| 金融事件追踪 | 聚合公告、交易所披露、实时行情、券商观点，统一为 `MarketEvent` |
+| 组合跟踪 | 维护 Watchlist，自选股票池联动事件流、预警中心和每日简报 |
+| 智能研报生成 | 基于 ReAct Agent、RAG、金融工具链生成 A 股深度研究报告 |
+| 事件驱动研究 | 单条事件可触发“事件点评 / 更新研报”任务，接入任务中心 |
+| 可解释质量体系 | 内置估值锚、风险证据、来源降级、质量门禁、回归测试 |
+| 产品化前端 | FastAPI + Next.js，覆盖事件追踪、事件详情、组合、预警、简报和股票工作台 |
 
----
-
-## 这个项目解决什么问题
-
-传统“自动写研报”往往停留在模板拼接或单轮问答。本项目更关注：
-
-1. **分析过程是否像真实研究流程**：先规划，再执行工具研究，再反思补充
-2. **结论是否有数据和估值支撑**：不仅输出观点，还输出估值、风险、同行对比和财务拆解
-3. **结果是否可评估、可回归、可持续优化**：不是只看一篇研报，而是能看评分、回归、消融和质量门禁
-4. **研究是否能持续追踪**：把公告、披露、行情、研报观点和风险舆情沉淀成事件历史，并在必要时触发研报更新
-
----
-
-## 快速导航
-
-- [快速开始](#快速开始)
-- [核心能力](#核心能力)
-- [系统概览](#系统概览)
-- [仓库结构](#仓库结构)
-- [评测与工程化能力](#评测与工程化能力)
-- [补充文档](#补充文档)
-- [产出物展示](#-产出物展示)
-
----
-
-## 快速开始
-
-### 1. 安装依赖
+## 在线/本地体验
 
 ```bash
+# 1. 安装后端依赖
 pip install -r requirements.txt
-```
 
-### 2. 配置环境变量
-
-```bash
+# 2. 配置环境变量
 cp .env.example .env
-```
 
-最小配置示例：
-
-```env
-LLM_PROVIDER=zhipu
-ZHIPUAI_API_KEY=your_api_key_here
-```
-
-如使用 OpenAI 兼容接口：
-
-```env
-LLM_PROVIDER=openai
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_BASE_URL=https://your-compatible-endpoint/v1
-```
-
-### 3. 运行项目
-
-```bash
-# 默认分析 600519
-python main.py 600519
-
-# 显式 analyze 子命令
-python main.py analyze 000858 --eval
-
-# Phase 1：附加 PDF / 图片 / 文本材料（可重复 --doc）
-python main.py analyze 600519 --doc docs/sample.txt --doc data/knowledge_base/example.pdf
-
-# 启动产品前端 API
+# 3. 启动 FastAPI
 python main.py api
 
-# 启动 Next.js 前端（另开终端）
+# 4. 启动 Next.js 前端
 cd frontend
+npm install
 npm run dev
 ```
 
-### 4. 常用扩展命令
+访问地址：
 
-> `--doc` 为可选增强输入；不传时仍走原有单股票分析主链路。
+- 前端工作台：`http://localhost:3000`
+- API 健康检查：`http://localhost:8000/api/v1/health`
+- 事件追踪：`/events`
+- 组合跟踪：`/watchlist`
+- 预警中心：`/alerts`
+- 每日简报：`/briefing`
 
-```bash
-# 重建知识库
-python main.py analyze 600519 --rebuild-kb
+## 核心工作流
 
-# 消融实验
-python main.py ablation
-
-# 黄金集回归
-python main.py regression
-
-# 质量门禁
-python main.py quality-gate
+```text
+数据源接入 -> 事件归一化 -> 去重与历史沉淀 -> 影响分类 -> 预警/简报 -> 触发研报更新
 ```
 
----
+## 技术栈
 
-## 核心能力
+| 层次 | 技术 |
+|------|------|
+| 后端 API | Python, FastAPI, Uvicorn |
+| 研究引擎 | ReAct Agent, RAG, FAISS, 金融分析工具链 |
+| 数据源 | akshare, CNInfo/交易所披露适配, 本地历史记忆 |
+| 前端 | Next.js, React, TypeScript |
+| 工程化 | Pytest, GitHub Actions, Docker |
 
-- 🔍 **杜邦分析**：ROE 三因素/五因素分解，定位盈利驱动因子
-- 💰 **DCF + 蒙特卡洛估值**：自由现金流折现模型 + 概率分布估值区间
-- 📈 **敏感性分析**：关键假设参数的敏感性矩阵
-- 🏢 **可比公司估值**：同行 PE / PB / PS 横向对比
-- 📊 **趋势与 CAGR 分析**：营收 / 利润 / 现金流趋势拆解
-- ⭐ **量化综合评分**：多维度加权打分体系
-- ⚠️ **风险识别**：财务风险、经营风险、行业风险自动识别
-- 📝 **研报自动评测**：规则型评分 + LLM-as-Judge + 一致性诊断
+## 快速命令
 
----
+```bash
+# 生成单只股票研报
+python main.py analyze 600519 --eval
+
+# 附加 PDF / 图片 / 文本材料
+python main.py analyze 600519 --doc docs/sample.txt --doc data/knowledge_base/example.pdf
+
+# 质量门禁
+python main.py quality-gate --skip-regression
+
+# 全量测试
+pytest -q
+```
 
 ## 系统概览
 
@@ -142,19 +94,6 @@ Planning（规划） → Acting（执行） → Reflecting（反思）
 | **评测模块** | 自动化研报质量评分与诊断 |
 | **Memory** | 历史分析结果沉淀与回看、对比 |
 | **产品前端** | Next.js 工作区、事件追踪、组合跟踪、预警/简报、运行中心与任务详情入口 |
-
-### 技术栈
-
-| 技术 | 用途 |
-|------|------|
-| **Python 3.10+** | 核心开发语言 |
-| **FastAPI / Next.js** | 产品前端 API 与浏览器工作区 |
-| **智谱 GLM-5.1 / OpenAI Compatible** | 大语言模型推理与生成 |
-| **FAISS** | 向量相似度检索 |
-| **akshare** | A 股金融数据获取 |
-| **NumPy / Pandas** | 数值计算与数据处理 |
-
----
 
 ## 仓库结构
 
@@ -194,7 +133,7 @@ python main.py human-eval output/report_xxx.md --stock-code 600519
 - **消融实验**：`baseline / no_reflection / no_rag`
 - **固定黄金集回归**：持续检查成功率、平均评分、章节覆盖率、估值锚覆盖率
 - **质量门禁**：支持本地与 CI 统一执行
-- **最小 CI 样板**：`.github/workflows/quality-gate.yml`
+- **GitHub Actions 流水线**：`.github/workflows/quality-gate.yml` 会运行后端测试、质量门禁和前端类型检查
 
 ---
 

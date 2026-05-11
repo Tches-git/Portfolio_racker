@@ -7,7 +7,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  python-tests:
+    name: Python tests and API contract
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -23,13 +24,40 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run pytest
+      - name: Run full pytest suite
+        run: pytest -q
+
+      - name: Run quality gate without LLM regression
         run: python main.py quality-gate --skip-regression
 
-  regression:
+  frontend-checks:
+    name: Frontend typecheck
     runs-on: ubuntu-latest
-    needs: test
-    if: ${{ secrets.ZHIPUAI_API_KEY != '' || secrets.OPENAI_API_KEY != '' }}
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Typecheck Next.js workspace
+        run: npm run typecheck
+
+  regression:
+    name: Optional golden regression
+    runs-on: ubuntu-latest
+    needs: [python-tests, frontend-checks]
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     env:
       ZHIPUAI_API_KEY: ${{ secrets.ZHIPUAI_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -50,4 +78,9 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run quality gate with golden regression
-        run: python main.py quality-gate --pytest-args -q
+        run: |
+          if [ -z "$ZHIPUAI_API_KEY" ] && [ -z "$OPENAI_API_KEY" ]; then
+            echo "No LLM credentials configured; optional regression skipped."
+            exit 0
+          fi
+          python main.py quality-gate --pytest-args -q
