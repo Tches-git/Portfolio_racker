@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.tracking.alerts import build_tracking_alerts
+from app.tracking.alerts import build_tracking_alerts, list_alert_rules
 from app.tracking.briefing import build_daily_briefing
 from app.tracking.models import EventCollection, MarketEvent
 
@@ -15,6 +15,24 @@ def test_build_tracking_alerts_flags_high_impact_and_risk():
 
     assert {alert.alert_type for alert in alerts} >= {"high_impact", "risk_watch", "source_degraded"}
     assert any(alert.severity == "high" for alert in alerts)
+    assert all(alert.rule_id for alert in alerts)
+
+
+def test_build_tracking_alerts_flags_manual_review_for_low_confidence_high_impact():
+    events = EventCollection(items=[
+        MarketEvent(event_id="e1", stock_code="600519", title="重大公告", impact_level="high", confidence=0.4),
+    ], total=1, high_impact_count=1)
+
+    alerts = build_tracking_alerts(events)
+
+    assert any(alert.alert_type == "manual_review" for alert in alerts)
+    assert any(alert.priority == "P0" for alert in alerts)
+
+
+def test_list_alert_rules_returns_builtin_rules():
+    rules = list_alert_rules()
+
+    assert {rule.rule_id for rule in rules} >= {"high_impact", "manual_review", "regulation_risk"}
 
 
 def test_build_daily_briefing_prioritizes_key_events_and_actions():

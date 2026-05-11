@@ -28,7 +28,7 @@ export default async function StockSummaryPage({ params }: { params: Promise<{ s
         <section className="panel span-7">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Summary Detail</div>
+              <div className="sectionEyebrow">摘要详情</div>
               <h2>研究摘要详情</h2>
             </div>
           </div>
@@ -42,7 +42,7 @@ export default async function StockSummaryPage({ params }: { params: Promise<{ s
         <section className="panel span-5">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Signals</div>
+              <div className="sectionEyebrow">关键指标</div>
               <h2>摘要信号卡</h2>
             </div>
           </div>
@@ -57,7 +57,7 @@ export default async function StockSummaryPage({ params }: { params: Promise<{ s
         <section className="panel span-12">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Research Context</div>
+              <div className="sectionEyebrow">研究上下文</div>
               <h2>研究上下文</h2>
             </div>
           </div>

@@ -65,7 +65,7 @@ export default async function StockHistoryPage({
         <section className="panel span-7">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Memory Timeline</div>
+              <div className="sectionEyebrow">记忆时间线</div>
               <h2>研究记忆时间线</h2>
             </div>
           </div>
@@ -101,7 +101,7 @@ export default async function StockHistoryPage({
         <section className="panel span-5">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">History Snapshot</div>
+              <div className="sectionEyebrow">历史快照</div>
               <h2>历史快照</h2>
             </div>
           </div>
@@ -165,7 +165,7 @@ export default async function StockHistoryPage({
         <section className="panel span-12">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Event Replay</div>
+              <div className="sectionEyebrow">事件复盘</div>
               <h2>历史事件影响复盘</h2>
             </div>
             <Link className="ghostLink" href={`/events?stock_codes=${stockCode}&mode=history`}>查看历史事件</Link>
@@ -205,7 +205,7 @@ export default async function StockHistoryPage({
         <section className="panel span-12">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Records Table</div>
+              <div className="sectionEyebrow">记录表格</div>
               <h2>历史记录明细</h2>
             </div>
           </div>

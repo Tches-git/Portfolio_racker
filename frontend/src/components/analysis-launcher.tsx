@@ -134,7 +134,7 @@ export function AnalysisLauncher({ initialCode, initialRuns = [] }: { initialCod
     <section className="panel span-12 actionPanel">
       <div className="sectionHead">
         <div>
-          <div className="sectionEyebrow">Action</div>
+          <div className="sectionEyebrow">分析动作</div>
           <h2>浏览器触发分析</h2>
         </div>
       </div>

@@ -70,7 +70,7 @@ export function GlobalRunCenter() {
     <section className="globalRunCenter">
       <div className="globalRunSummary">
         <div>
-          <div className="sectionEyebrow">Run Center</div>
+          <div className="sectionEyebrow">运行中心</div>
           <div className="globalRunTitle">全局运行中心</div>
           <div className="globalRunCenterSync">{syncLabel}</div>
         </div>

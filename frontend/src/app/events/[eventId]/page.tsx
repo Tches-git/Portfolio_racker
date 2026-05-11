@@ -21,7 +21,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ ev
         <section className="hero">
           <div className="heroTop">
             <div>
-              <div className="eyebrow">Event Detail</div>
+              <div className="eyebrow">事件详情</div>
               <h1>未找到事件</h1>
               <p>该事件可能尚未进入历史库，或实时来源暂时不可用。</p>
             </div>
@@ -38,7 +38,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ ev
       <section className="hero">
         <div className="heroTop">
           <div>
-            <div className="eyebrow">Event Detail</div>
+            <div className="eyebrow">事件详情</div>
             <h1>{event.title}</h1>
             <p>{event.summary || event.reason}</p>
           </div>
@@ -59,19 +59,24 @@ export default async function EventDetailPage({ params }: { params: Promise<{ ev
       <section className="panel">
         <div className="sectionHead">
           <div>
-            <div className="sectionEyebrow">Workflow</div>
+            <div className="sectionEyebrow">处理流程</div>
             <h2>处理状态</h2>
           </div>
         </div>
-        <EventStatusControls eventId={event.event_id} status={event.status} />
-        {event.status_updated_at ? <div className="inlineMeta">最近更新：{event.status_updated_at} · {event.status_note || '无备注'}</div> : null}
+        <EventStatusControls
+          eventId={event.event_id}
+          status={event.status}
+          statusUpdatedAt={event.status_updated_at}
+          statusActor={event.status_actor}
+          statusNote={event.status_note}
+        />
       </section>
 
       <div className="grid">
         <section className="panel span-7">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Impact</div>
+              <div className="sectionEyebrow">影响分析</div>
               <h2>影响判断</h2>
             </div>
           </div>
@@ -91,7 +96,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ ev
         <section className="panel span-5">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Evidence</div>
+              <div className="sectionEyebrow">证据来源</div>
               <h2>相关来源</h2>
             </div>
           </div>

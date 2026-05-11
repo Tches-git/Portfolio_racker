@@ -34,6 +34,7 @@ class MarketEvent:
     status: str = "new"
     status_updated_at: str = ""
     status_note: str = ""
+    status_actor: str = ""
 
 
 @dataclass
@@ -55,13 +56,33 @@ class TrackingAlert:
     alert_id: str
     stock_code: str
     event_id: str
+    rule_id: str = ""
+    rule_name: str = ""
     alert_type: str = "high_impact"
     title: str = ""
     message: str = ""
     severity: str = "medium"
+    priority: str = "P2"
     status: str = "open"
     created_at: str = ""
     suggested_action: str = ""
+    explanation: str = ""
+    handled_at: str = ""
+    handled_by: str = ""
+    handling_note: str = ""
+
+
+@dataclass
+class AlertRule:
+    """本地内置预警规则。"""
+
+    rule_id: str
+    name: str
+    description: str = ""
+    alert_type: str = ""
+    severity: str = "medium"
+    priority: str = "P2"
+    enabled: bool = True
 
 
 @dataclass

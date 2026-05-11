@@ -32,11 +32,12 @@ def test_query_events_filters_history(tmp_path):
 def test_event_status_update_persists_and_filters(tmp_path):
     save_events([MarketEvent(event_id="e1", stock_code="600519", title="待处理事件")], output_dir=tmp_path)
 
-    updated = update_event_status("e1", "reviewed", note="已人工复核", output_dir=tmp_path)
+    updated = update_event_status("e1", "reviewed", note="已人工复核", actor="alice", output_dir=tmp_path)
 
     assert updated is not None
     assert updated.status == "reviewed"
     assert updated.status_note == "已人工复核"
+    assert updated.status_actor == "alice"
     assert query_events(status="reviewed", output_dir=tmp_path)[0].event_id == "e1"
 
 
@@ -50,6 +51,37 @@ def test_save_events_preserves_existing_event_status(tmp_path):
     assert event is not None
     assert event.title == "实时刷新事件"
     assert event.status == "ignored"
+
+
+def test_save_events_semantically_dedupes_history_and_preserves_status(tmp_path):
+    save_events([
+        MarketEvent(
+            event_id="e1",
+            stock_code="600519",
+            event_type="announcement",
+            title="贵州茅台发布分红公告",
+            published_at="2026-05-11T09:00:00",
+            url="https://example.com/a",
+        )
+    ], output_dir=tmp_path)
+    update_event_status("e1", "reviewed", note="已核验", output_dir=tmp_path)
+
+    save_events([
+        MarketEvent(
+            event_id="e2",
+            stock_code="600519",
+            event_type="announcement",
+            title="贵州茅台发布分红公告",
+            published_at="2026-05-11T10:00:00",
+            url="https://example.com/a?utm=1",
+        )
+    ], output_dir=tmp_path)
+
+    events = query_events(stock_code="600519", output_dir=tmp_path)
+    assert len(events) == 1
+    assert events[0].event_id == "e1"
+    assert events[0].status == "reviewed"
+    assert events[0].status_note == "已核验"
 
 
 def test_infer_event_type_covers_platform_categories():

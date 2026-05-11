@@ -7,7 +7,7 @@ export function StockCardGrid({ stocks }: { stocks: WorkspaceStocksResponse['ite
     <section className="panel span-12">
       <div className="sectionHead">
         <div>
-          <div className="sectionEyebrow">Portfolio</div>
+          <div className="sectionEyebrow">组合范围</div>
           <h2>组合跟踪</h2>
         </div>
         <span className="inlineMeta">按最近沉淀的研究记录排序</span>

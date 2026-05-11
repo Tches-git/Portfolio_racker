@@ -13,7 +13,7 @@ export function WorkspaceInsights({ stockCode, workspace }: { stockCode: string;
     <section className="panel span-12">
       <div className="sectionHead">
         <div>
-          <div className="sectionEyebrow">Workspace</div>
+          <div className="sectionEyebrow">工作区</div>
           <h2>研究工作台能力</h2>
         </div>
       </div>

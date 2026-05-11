@@ -15,7 +15,7 @@ export function StockWorkspaceNav({ stockCode, current }: { stockCode: string; c
   return (
     <section className="workspaceNav">
       <div>
-        <div className="statusLabel">Workspace</div>
+        <div className="statusLabel">股票工作区</div>
         <div className="workspaceTitle">{stockCode}</div>
       </div>
       <div className="workspaceTabs">

@@ -7,13 +7,14 @@ from datetime import datetime
 from pathlib import Path
 
 from app.config import OUTPUT_DIR
+from app.tracking.deduper import dedupe_events
 from app.tracking.models import MarketEvent
 
 VALID_EVENT_STATUSES = {"new", "reviewed", "ignored", "converted_to_report"}
 
 
 def save_events(events: list[MarketEvent], *, output_dir: Path = OUTPUT_DIR) -> None:
-    """按 event_id 去重保存事件历史。"""
+    """按 event_id 和语义重复关系保存事件历史。"""
     if not events:
         return
     current = {event.event_id: event for event in load_events(output_dir=output_dir)}
@@ -21,7 +22,8 @@ def save_events(events: list[MarketEvent], *, output_dir: Path = OUTPUT_DIR) -> 
         if event.event_id:
             _preserve_existing_status(event, current.get(event.event_id))
             current[event.event_id] = event
-    ordered = sorted(current.values(), key=lambda item: item.published_at or item.collected_at, reverse=True)
+    merged = dedupe_events(list(current.values()))
+    ordered = sorted(merged, key=lambda item: item.published_at or item.collected_at, reverse=True)
     _save(ordered, output_dir=output_dir)
 
 
@@ -80,7 +82,7 @@ def get_event(event_id: str, *, output_dir: Path = OUTPUT_DIR) -> MarketEvent | 
     return None
 
 
-def update_event_status(event_id: str, status: str, *, note: str = "", output_dir: Path = OUTPUT_DIR) -> MarketEvent | None:
+def update_event_status(event_id: str, status: str, *, note: str = "", actor: str = "system", output_dir: Path = OUTPUT_DIR) -> MarketEvent | None:
     """更新事件处理状态并持久化。"""
     normalized_status = normalize_event_status(status)
     events = load_events(output_dir=output_dir)
@@ -92,6 +94,7 @@ def update_event_status(event_id: str, status: str, *, note: str = "", output_di
         event.status = normalized_status
         event.status_updated_at = now
         event.status_note = note.strip()
+        event.status_actor = actor.strip() or "system"
         updated = event
         break
     if updated is None:
@@ -145,6 +148,7 @@ def _event_from_dict(item: dict) -> MarketEvent:
         status=str(item.get("status", "new") or "new"),
         status_updated_at=str(item.get("status_updated_at", "")),
         status_note=str(item.get("status_note", "")),
+        status_actor=str(item.get("status_actor", "")),
     )
 
 
@@ -156,3 +160,4 @@ def _preserve_existing_status(event: MarketEvent, existing: MarketEvent | None) 
     event.status = existing.status
     event.status_updated_at = existing.status_updated_at
     event.status_note = existing.status_note
+    event.status_actor = existing.status_actor

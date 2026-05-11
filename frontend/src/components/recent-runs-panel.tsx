@@ -11,7 +11,7 @@ export function RecentRunsPanel({ runs }: { runs: AnalysisRunResponse[] }) {
     <section className="panel span-12">
       <div className="sectionHead">
         <div>
-          <div className="sectionEyebrow">Recent Runs</div>
+          <div className="sectionEyebrow">最近任务</div>
           <h2>最近运行任务</h2>
         </div>
         <Link className="ghostLink" href="/runs">进入任务中心</Link>

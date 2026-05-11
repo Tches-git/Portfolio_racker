@@ -26,7 +26,7 @@ export default async function StockPage({ params }: { params: Promise<{ stockCod
             <section className="hero stockHero">
                 <div className="heroTop">
                     <div>
-                        <div className="eyebrow">Stock Workspace</div>
+                        <div className="eyebrow">股票情报中心</div>
                         <h1>{latest?.stock.name || stockCode}</h1>
                         <p>{stockCode} · {latest?.stock.industry || '股票研究工作台'}。围绕新闻、事件、组合与研报任务建立单股情报中心。</p>
                     </div>
@@ -53,7 +53,7 @@ export default async function StockPage({ params }: { params: Promise<{ stockCod
                 <section className="panel span-5">
                     <div className="sectionHead">
                         <div>
-                            <div className="sectionEyebrow">Timeline</div>
+                            <div className="sectionEyebrow">事件时间线</div>
                             <h2>事件追踪</h2>
                         </div>
                         <Link className="downloadLink" href={`/stocks/${stockCode}/timeline`}>打开时间线</Link>
@@ -79,7 +79,7 @@ export default async function StockPage({ params }: { params: Promise<{ stockCod
                 <section className="panel span-5">
                     <div className="sectionHead">
                         <div>
-                            <div className="sectionEyebrow">Portfolio Context</div>
+                            <div className="sectionEyebrow">组合上下文</div>
                             <h2>所属组合</h2>
                         </div>
                         <Link className="downloadLink" href="/watchlist">组合列表</Link>

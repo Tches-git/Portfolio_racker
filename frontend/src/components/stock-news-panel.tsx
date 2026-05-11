@@ -5,7 +5,7 @@ export function StockNewsPanel({ news }: { news: StockNewsResponse }) {
     <section className="panel span-12">
       <div className="sectionHead">
         <div>
-          <div className="sectionEyebrow">Live News</div>
+          <div className="sectionEyebrow">实时新闻</div>
           <h2>最新新闻</h2>
         </div>
         <span className="inlineMeta">{news.total} 条 · 东方财富优先，新浪搜索回退</span>

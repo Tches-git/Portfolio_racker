@@ -33,7 +33,7 @@ export default async function EventsPage({ searchParams }: { searchParams?: Prom
       <section className="hero">
         <div className="heroTop">
           <div>
-            <div className="eyebrow">Market Event Stream</div>
+            <div className="eyebrow">金融事件流</div>
             <h1>金融事件追踪</h1>
             <p>聚合公告、披露、行情与研报来源，把碎片消息整理成可追踪、可解释、可触发研究任务的事件流。</p>
           </div>
@@ -56,7 +56,7 @@ export default async function EventsPage({ searchParams }: { searchParams?: Prom
         <section className="panel span-7">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Events</div>
+              <div className="sectionEyebrow">事件列表</div>
               <h2>最新事件流</h2>
             </div>
           </div>
@@ -91,7 +91,13 @@ export default async function EventsPage({ searchParams }: { searchParams?: Prom
                     <Link className="downloadLink" href={`/stocks/${event.stock_code}/timeline`}>股票时间线</Link>
                     <EventAnalyzeButton eventId={event.event_id} />
                   </div>
-                  <EventStatusControls eventId={event.event_id} status={event.status} />
+                  <EventStatusControls
+                    eventId={event.event_id}
+                    status={event.status}
+                    statusUpdatedAt={event.status_updated_at}
+                    statusActor={event.status_actor}
+                    statusNote={event.status_note}
+                  />
                 </div>
               </div>
             ))}
@@ -102,7 +108,7 @@ export default async function EventsPage({ searchParams }: { searchParams?: Prom
         <section className="panel span-5">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Radar</div>
+              <div className="sectionEyebrow">高影响雷达</div>
               <h2>高影响雷达</h2>
             </div>
           </div>

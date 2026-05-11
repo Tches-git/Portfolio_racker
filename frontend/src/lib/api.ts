@@ -1,4 +1,4 @@
-import type { AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateResponse, DailyBriefingResponse, EventImpactReviewResponse, LatestReportResponse, MarketEvent, MarketEventListResponse, ReportDiffResponse, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDetailResponse, WatchlistListResponse, Watchlist, WorkspaceStocksResponse } from './types'
+import type { AlertRuleListResponse, AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateResponse, DailyBriefingResponse, EventImpactReviewResponse, LatestReportResponse, MarketEvent, MarketEventListResponse, ReportDiffResponse, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDetailResponse, WatchlistListResponse, Watchlist, WorkspaceStocksResponse } from './types'
 
 export const API_BASE = typeof window === 'undefined'
   ? process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000'
@@ -54,7 +54,7 @@ export async function analyzeEvent(eventId: string): Promise<AnalysisRunResponse
 export async function updateEventStatus(eventId: string, status: MarketEvent['status'], note = ''): Promise<MarketEvent> {
   const res = await fetch(`${API_BASE}/api/v1/events/${eventId}/status`, {
     method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'X-Actor': 'browser-user', 'X-Role': 'admin' },
     body: JSON.stringify({ status, note }),
   })
   if (!res.ok) {
@@ -79,14 +79,33 @@ export async function fetchEventImpactReview(stockCode: string, limit = 20): Pro
   return res.json()
 }
 
-export async function fetchTrackingAlerts(stockCodes: string[] = [], limitPerStock = 4, status = 'open'): Promise<TrackingAlertListResponse> {
+export type TrackingAlertFilters = {
+  mode?: 'realtime' | 'history'
+  severity?: string
+  alertType?: string
+  ruleId?: string
+}
+
+export async function fetchTrackingAlerts(stockCodes: string[] = [], limitPerStock = 4, status = 'open', filters: TrackingAlertFilters = {}): Promise<TrackingAlertListResponse> {
   const query = new URLSearchParams()
   if (stockCodes.length) query.set('stock_codes', stockCodes.join(','))
   query.set('limit_per_stock', String(limitPerStock))
   if (status) query.set('status', status)
+  if (filters.mode) query.set('mode', filters.mode)
+  if (filters.severity) query.set('severity', filters.severity)
+  if (filters.alertType) query.set('alert_type', filters.alertType)
+  if (filters.ruleId) query.set('rule_id', filters.ruleId)
   const res = await fetch(`${API_BASE}/api/v1/alerts?${query.toString()}`, { cache: 'no-store' })
   if (!res.ok) {
     throw new Error('获取预警中心失败')
+  }
+  return res.json()
+}
+
+export async function fetchAlertRules(): Promise<AlertRuleListResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/alerts/rules`, { cache: 'no-store' })
+  if (!res.ok) {
+    throw new Error('获取预警规则失败')
   }
   return res.json()
 }

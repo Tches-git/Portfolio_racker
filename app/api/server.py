@@ -8,13 +8,13 @@ from fastapi.responses import FileResponse
 from app.api.download import ExportNotFoundError, resolve_export_file
 from app.api.mappers import build_health_response, map_history_record
 from app.api.run_manager import RunActionError, RunNotFoundError, run_manager
-from app.api.schemas import AnalysisRunCreateRequest, AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateRequest, BatchRunCreateResponse, DailyBriefingResponse, EventAnalyzeRequest, EventImpactReplayItemDTO, EventImpactReviewResponse, EventStatusUpdateRequest, HealthResponse, LatestReportResponse, MarketEventDTO, MarketEventListResponse, OpsMetricsResponse, ReportDiffResponse, RunAssignmentRequest, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, StoreBackupResponse, StoreHealthResponse, TrackingAlertDTO, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDTO, WatchlistDetailResponse, WatchlistImpactStockDTO, WatchlistListResponse, WatchlistSummaryDTO, WorkspaceStocksResponse
+from app.api.schemas import AlertRuleDTO, AlertRuleListResponse, AnalysisRunCreateRequest, AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateRequest, BatchRunCreateResponse, DailyBriefingResponse, EventAnalyzeRequest, EventImpactReplayItemDTO, EventImpactReviewResponse, EventStatusUpdateRequest, HealthResponse, LatestReportResponse, MarketEventDTO, MarketEventListResponse, OpsMetricsResponse, ReportDiffResponse, RunAssignmentRequest, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, StoreBackupResponse, StoreHealthResponse, TrackingAlertDTO, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDTO, WatchlistDetailResponse, WatchlistImpactStockDTO, WatchlistListResponse, WatchlistSummaryDTO, WorkspaceStocksResponse
 from app.api.services import NotFoundError, get_latest_report, get_stock_history
 from app.data_source.akshare_client import get_recent_news
 from app.memory.store import get_memory_store
 from app.tracking.service import collect_historical_events, collect_market_events, collect_stock_events, find_market_event, summarize_events
 from app.tracking.history import save_events, update_event_status
-from app.tracking.alerts import build_tracking_alerts
+from app.tracking.alerts import build_tracking_alerts, list_alert_rules
 from app.tracking.briefing import build_daily_briefing
 from app.tracking.watchlist import create_watchlist, get_watchlist, list_watchlists, mark_watchlist_refreshed
 
@@ -49,12 +49,19 @@ def _market_event_list_response(collection, *, mode: str = "realtime") -> Market
 
 
 def _tracking_alert_list_response(alerts) -> TrackingAlertListResponse:
+    severity_counts = _count_by(alerts, "severity")
+    alert_type_counts = _count_by(alerts, "alert_type")
+    rule_counts = _count_by(alerts, "rule_id")
     return TrackingAlertListResponse(
         items=[TrackingAlertDTO(**alert.__dict__) for alert in alerts],
         total=len(alerts),
         high_severity_count=sum(1 for alert in alerts if alert.severity == "high"),
         risk_alert_count=sum(1 for alert in alerts if alert.alert_type == "risk_watch"),
         source_degraded_count=sum(1 for alert in alerts if alert.alert_type == "source_degraded"),
+        manual_review_count=sum(1 for alert in alerts if alert.alert_type == "manual_review"),
+        severity_counts=severity_counts,
+        alert_type_counts=alert_type_counts,
+        rule_counts=rule_counts,
     )
 
 
@@ -63,6 +70,27 @@ def _filter_alerts_by_status(alerts, status: str):
     if normalized == "all":
         return alerts
     return [alert for alert in alerts if alert.status == normalized]
+
+
+def _filter_alerts(alerts, *, status: str = "open", severity: str = "", alert_type: str = "", rule_id: str = ""):
+    filtered = _filter_alerts_by_status(alerts, status)
+    if severity:
+        filtered = [alert for alert in filtered if alert.severity == severity]
+    if alert_type:
+        filtered = [alert for alert in filtered if alert.alert_type == alert_type]
+    if rule_id:
+        filtered = [alert for alert in filtered if alert.rule_id == rule_id]
+    return filtered
+
+
+def _count_by(items, attribute: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        value = str(getattr(item, attribute, "") or "")
+        if not value:
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    return counts
 
 
 def _daily_briefing_response(briefing) -> DailyBriefingResponse:
@@ -86,7 +114,8 @@ def _watchlist_detail_response(watchlist, collection, *, mode: str = "history") 
     alerts = _filter_alerts_by_status(build_tracking_alerts(collection), "open")
     briefing = build_daily_briefing(collection, title=f"{watchlist.name} 组合简报")
     alert_response = _tracking_alert_list_response(alerts)
-    impacted_stocks = _rank_impacted_stocks(collection.items)
+    impacted_stocks = _rank_impacted_stocks(collection.items, alerts)
+    risk = _watchlist_risk(collection.items, alerts, alert_response)
     summary = WatchlistSummaryDTO(
         stock_count=len(watchlist.stock_codes),
         event_count=collection.total,
@@ -95,6 +124,16 @@ def _watchlist_detail_response(watchlist, collection, *, mode: str = "history") 
         high_severity_count=alert_response.high_severity_count,
         source_count=collection.source_count,
         placeholder_count=collection.placeholder_count,
+        risk_score=int(risk["risk_score"]),
+        risk_level=str(risk["risk_level"]),
+        risk_summary=str(risk["risk_summary"]),
+        open_alert_count=alert_response.total,
+        handled_event_count=sum(1 for event in collection.items if event.status in {"reviewed", "ignored", "converted_to_report"}),
+        converted_event_count=sum(1 for event in collection.items if event.status == "converted_to_report"),
+        manual_review_count=alert_response.manual_review_count,
+        processing_rate=float(risk["processing_rate"]),
+        dominant_rules=list(risk["dominant_rules"]),
+        priority_actions=list(risk["priority_actions"]),
         last_refreshed_at=watchlist.last_refreshed_at,
         impacted_stocks=impacted_stocks,
     )
@@ -107,8 +146,9 @@ def _watchlist_detail_response(watchlist, collection, *, mode: str = "history") 
     )
 
 
-def _rank_impacted_stocks(events) -> list[WatchlistImpactStockDTO]:
+def _rank_impacted_stocks(events, alerts=None) -> list[WatchlistImpactStockDTO]:
     grouped: dict[str, dict[str, object]] = {}
+    alerts = list(alerts or [])
     for event in events:
         code = event.stock_code
         if not code:
@@ -116,7 +156,17 @@ def _rank_impacted_stocks(events) -> list[WatchlistImpactStockDTO]:
         event_time = event.published_at or event.collected_at
         current = grouped.setdefault(
             code,
-            {"stock_code": code, "stock_name": event.stock_name, "event_count": 0, "high_impact_count": 0, "latest_event_at": ""},
+            {
+                "stock_code": code,
+                "stock_name": event.stock_name,
+                "event_count": 0,
+                "high_impact_count": 0,
+                "alert_count": 0,
+                "risk_score": 0,
+                "risk_level": "low",
+                "priority_action": "",
+                "latest_event_at": "",
+            },
         )
         current["event_count"] = int(current["event_count"]) + 1
         current["stock_name"] = current["stock_name"] or event.stock_name
@@ -124,12 +174,98 @@ def _rank_impacted_stocks(events) -> list[WatchlistImpactStockDTO]:
             current["high_impact_count"] = int(current["high_impact_count"]) + 1
         if event_time and event_time > str(current["latest_event_at"]):
             current["latest_event_at"] = event_time
+    alert_counts = _alert_counts_by_stock(alerts)
+    for code, current in grouped.items():
+        current["alert_count"] = alert_counts.get(code, 0)
+        risk_score = min(100, int(current["high_impact_count"]) * 35 + int(current["alert_count"]) * 20 + int(current["event_count"]) * 4)
+        current["risk_score"] = risk_score
+        current["risk_level"] = _risk_level(risk_score)
+        current["priority_action"] = _priority_action(str(current["risk_level"]), int(current["alert_count"]), int(current["high_impact_count"]))
     ranked = sorted(
         grouped.values(),
-        key=lambda item: (int(item["high_impact_count"]), int(item["event_count"]), str(item["latest_event_at"])),
+        key=lambda item: (int(item["risk_score"]), int(item["high_impact_count"]), int(item["event_count"]), str(item["latest_event_at"])),
         reverse=True,
     )
     return [WatchlistImpactStockDTO(**item) for item in ranked]
+
+
+def _watchlist_risk(events, alerts, alert_response: TrackingAlertListResponse) -> dict[str, object]:
+    events = list(events or [])
+    alerts = list(alerts or [])
+    handled_count = sum(1 for event in events if event.status in {"reviewed", "ignored", "converted_to_report"})
+    actionable_count = sum(1 for event in events if event.status != "ignored")
+    processing_rate = round(handled_count / actionable_count, 4) if actionable_count else 0.0
+    high_impact_count = sum(1 for event in events if event.impact_level == "high")
+    source_degraded_count = alert_response.source_degraded_count
+    manual_review_count = alert_response.manual_review_count
+    risk_score = min(
+        100,
+        high_impact_count * 24
+        + alert_response.high_severity_count * 18
+        + alert_response.risk_alert_count * 14
+        + manual_review_count * 20
+        + source_degraded_count * 6
+        + max(0, len(events) - handled_count) * 3,
+    )
+    risk_level = _risk_level(risk_score)
+    dominant_rules = [
+        key
+        for key, _ in sorted(alert_response.rule_counts.items(), key=lambda item: item[1], reverse=True)[:3]
+    ]
+    return {
+        "risk_score": risk_score,
+        "risk_level": risk_level,
+        "risk_summary": _risk_summary(risk_level, risk_score, alert_response.total, high_impact_count, processing_rate),
+        "processing_rate": processing_rate,
+        "dominant_rules": dominant_rules,
+        "priority_actions": _watchlist_priority_actions(risk_level, alert_response, high_impact_count, processing_rate),
+    }
+
+
+def _alert_counts_by_stock(alerts) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for alert in alerts:
+        code = str(getattr(alert, "stock_code", "") or "")
+        if not code:
+            continue
+        counts[code] = counts.get(code, 0) + 1
+    return counts
+
+
+def _risk_level(score: int) -> str:
+    if score >= 70:
+        return "high"
+    if score >= 35:
+        return "medium"
+    return "low"
+
+
+def _risk_summary(level: str, score: int, alert_count: int, high_impact_count: int, processing_rate: float) -> str:
+    level_label = {"high": "高风险", "medium": "中等风险", "low": "低风险"}.get(level, "低风险")
+    return f"组合当前为{level_label}，风险分 {score}，开放预警 {alert_count} 个，高影响事件 {high_impact_count} 个，处理率 {processing_rate:.0%}。"
+
+
+def _priority_action(level: str, alert_count: int, high_impact_count: int) -> str:
+    if level == "high":
+        return "优先处理高影响事件并触发事件点评。"
+    if alert_count:
+        return "先复核开放预警，再决定是否更新研报。"
+    if high_impact_count:
+        return "复核高影响事件的来源和影响方向。"
+    return "保持观察，等待下一次组合刷新。"
+
+
+def _watchlist_priority_actions(level: str, alert_response: TrackingAlertListResponse, high_impact_count: int, processing_rate: float) -> list[str]:
+    actions: list[str] = []
+    if level == "high":
+        actions.append("立即处理 P0 预警，并把高影响事件转成事件点评。")
+    if alert_response.manual_review_count:
+        actions.append("先完成低置信高影响事件的人工复核。")
+    if alert_response.source_degraded_count:
+        actions.append("补充来源降级事件的正式公告、新闻或研报来源。")
+    if high_impact_count and processing_rate < 0.5:
+        actions.append("把未处理高影响事件标记为已复核、忽略或已转研报。")
+    return actions[:4] or ["当前组合风险可控，保持刷新和观察。"]
 
 
 def _event_impact_review_response(stock_code: str, collection, runs) -> EventImpactReviewResponse:
@@ -265,13 +401,19 @@ def event_detail(event_id: str, stock_codes: str = "") -> MarketEventDTO:
 
 
 @app.patch("/api/v1/events/{event_id}/status", response_model=MarketEventDTO)
-def update_market_event_status(event_id: str, payload: EventStatusUpdateRequest) -> MarketEventDTO:
+def update_market_event_status(
+    event_id: str,
+    payload: EventStatusUpdateRequest,
+    actor_header: str = Header(default='browser-user', alias='X-Actor'),
+    role_header: str = Header(default='admin', alias='X-Role'),
+) -> MarketEventDTO:
     event = find_market_event(event_id)
     if event is None:
         raise HTTPException(status_code=404, detail=f"未找到事件: {event_id}")
     save_events([event])
+    actor, _ = _actor(actor_header, role_header)
     try:
-        updated = update_event_status(event_id, payload.status, note=payload.note)
+        updated = update_event_status(event_id, payload.status, note=payload.note, actor=actor)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if updated is None:
@@ -317,7 +459,7 @@ def analyze_event(
     }
     run = run_manager.start_event_run(event.stock_code, event_context=context, actor=actor, role=role)
     save_events([event])
-    update_event_status(event.event_id, "converted_to_report", note=payload.note if payload else "已触发事件研报任务")
+    update_event_status(event.event_id, "converted_to_report", note=payload.note if payload else "已触发事件研报任务", actor=actor)
     return run_manager.get_run_response(run.run_id)
 
 
@@ -345,11 +487,38 @@ def stock_event_impact_review(stock_code: str, limit: int = 20) -> EventImpactRe
     return _event_impact_review_response(stock_code, collection, runs)
 
 
+@app.get("/api/v1/alerts/rules", response_model=AlertRuleListResponse)
+def tracking_alert_rules() -> AlertRuleListResponse:
+    rules = list_alert_rules()
+    return AlertRuleListResponse(items=[AlertRuleDTO(**rule.__dict__) for rule in rules], total=len(rules))
+
+
 @app.get("/api/v1/alerts", response_model=TrackingAlertListResponse)
-def tracking_alerts(stock_codes: str = "", limit_per_stock: int = 4, status: str = "open") -> TrackingAlertListResponse:
+def tracking_alerts(
+    stock_codes: str = "",
+    limit_per_stock: int = 4,
+    status: str = "open",
+    mode: str = "realtime",
+    severity: str = "",
+    alert_type: str = "",
+    rule_id: str = "",
+) -> TrackingAlertListResponse:
     codes = [part.strip() for part in stock_codes.split(",") if part.strip()] if stock_codes else None
-    collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
-    alerts = _filter_alerts_by_status(build_tracking_alerts(collection), status)
+    normalized_mode = "history" if mode == "history" else "realtime"
+    if normalized_mode == "history":
+        collection = collect_historical_events(
+            stock_codes=codes,
+            limit=max(1, min(limit_per_stock * max(1, len(codes or []), 4), 120)),
+        )
+    else:
+        collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
+    alerts = _filter_alerts(
+        build_tracking_alerts(collection),
+        status=status,
+        severity=severity,
+        alert_type=alert_type,
+        rule_id=rule_id,
+    )
     return _tracking_alert_list_response(alerts)
 
 

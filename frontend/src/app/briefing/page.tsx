@@ -13,7 +13,7 @@ export default async function BriefingPage({ searchParams }: { searchParams?: Pr
       <section className="hero">
         <div className="heroTop">
           <div>
-            <div className="eyebrow">Daily Briefing</div>
+            <div className="eyebrow">每日简报</div>
             <h1>{briefing.title}</h1>
             <p>{briefing.summary}</p>
           </div>
@@ -32,7 +32,7 @@ export default async function BriefingPage({ searchParams }: { searchParams?: Pr
         <section className="panel span-7">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Key Events</div>
+              <div className="sectionEyebrow">关键事件</div>
               <h2>今日关键事件</h2>
             </div>
           </div>
@@ -59,7 +59,7 @@ export default async function BriefingPage({ searchParams }: { searchParams?: Pr
         <section className="panel span-5">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Actions</div>
+              <div className="sectionEyebrow">建议动作</div>
               <h2>建议动作</h2>
             </div>
           </div>

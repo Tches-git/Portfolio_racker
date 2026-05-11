@@ -18,7 +18,7 @@ export default async function StockTimelinePage({ params }: { params: Promise<{ 
       <section className="hero stockHero">
         <div className="heroTop">
           <div>
-            <div className="eyebrow">Stock Event Timeline</div>
+            <div className="eyebrow">股票事件时间线</div>
             <h1>{timeline.stock_name || stockCode} 事件时间线</h1>
             <p>{stockCode} · 聚合公告、披露、行情和研报观点，持续判断事件类型、影响方向和复核优先级。</p>
           </div>
@@ -38,7 +38,7 @@ export default async function StockTimelinePage({ params }: { params: Promise<{ 
       <section className="panel">
         <div className="sectionHead">
           <div>
-            <div className="sectionEyebrow">Timeline</div>
+            <div className="sectionEyebrow">时间线</div>
             <h2>事件明细</h2>
           </div>
         </div>

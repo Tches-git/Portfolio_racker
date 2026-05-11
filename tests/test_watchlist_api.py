@@ -41,7 +41,7 @@ def test_watchlist_detail_endpoint_returns_portfolio_context(monkeypatch):
         stock_codes=["600519"],
         last_refreshed_at="2026-05-11T09:30:00",
     )
-    event = MarketEvent(event_id="e1", stock_code="600519", title="高影响公告", impact_level="high", provider="cninfo")
+    event = MarketEvent(event_id="e1", stock_code="600519", title="高影响公告", impact_level="high", provider="cninfo", confidence=0.4)
     monkeypatch.setattr("app.api.server.get_watchlist", lambda watchlist_id: watchlist if watchlist_id == "wl1" else None)
     monkeypatch.setattr("app.api.server.collect_historical_events", lambda stock_codes=None, limit=80: EventCollection(items=[event], total=1, high_impact_count=1, source_count=1))
 
@@ -50,7 +50,11 @@ def test_watchlist_detail_endpoint_returns_portfolio_context(monkeypatch):
     assert payload["watchlist"]["watchlist_id"] == "wl1"
     assert payload["events"]["mode"] == "history"
     assert payload["summary"]["event_count"] == 1
+    assert payload["summary"]["risk_score"] > 0
+    assert payload["summary"]["risk_level"] in {"low", "medium", "high"}
+    assert payload["summary"]["priority_actions"]
     assert payload["summary"]["impacted_stocks"][0]["stock_code"] == "600519"
+    assert payload["summary"]["impacted_stocks"][0]["risk_score"] > 0
 
 
 def test_watchlist_detail_endpoint_returns_404_for_missing_watchlist(monkeypatch):

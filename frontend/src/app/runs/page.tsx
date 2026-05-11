@@ -41,7 +41,7 @@ export default async function RunsIndexPage({ searchParams }: { searchParams?: P
         <section className="panel span-12">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Queue</div>
+              <div className="sectionEyebrow">运行队列</div>
               <h2>运行队列</h2>
             </div>
           </div>
@@ -92,7 +92,7 @@ export default async function RunsIndexPage({ searchParams }: { searchParams?: P
         <section className="panel span-12">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Stock Groups</div>
+              <div className="sectionEyebrow">股票聚合</div>
               <h2>按股票聚合</h2>
             </div>
           </div>
@@ -118,7 +118,7 @@ export default async function RunsIndexPage({ searchParams }: { searchParams?: P
         <section className="panel span-12">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">All Runs</div>
+              <div className="sectionEyebrow">全部任务</div>
               <h2>最近任务列表</h2>
             </div>
           </div>
@@ -157,7 +157,7 @@ export default async function RunsIndexPage({ searchParams }: { searchParams?: P
                   <div className="metricRow"><span>重启中断</span><strong>{selectedRun.observability.stale_after_restart ? '是' : '否'}</strong></div>
                   <div className="metricRow"><span>负责人</span><strong>{selectedRun.observability.owner_label}</strong></div>
                   <div className="metricRow"><span>尝试次数</span><strong>{selectedRun.observability.attempts}/{selectedRun.observability.max_attempts}</strong></div>
-                  <div className="metricRow"><span>Worker</span><strong>{selectedRun.observability.worker_id || '--'}</strong></div>
+                  <div className="metricRow"><span>执行器</span><strong>{selectedRun.observability.worker_id || '--'}</strong></div>
                 </div>
               </div>
               <div className="card">

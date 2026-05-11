@@ -11,7 +11,7 @@ export function ReportDashboard({ latest, history }: { latest: LatestReportRespo
       <section className="panel span-7" id="summary">
         <div className="sectionHead">
           <div>
-            <div className="sectionEyebrow">Summary</div>
+            <div className="sectionEyebrow">摘要</div>
             <h2>最新研究摘要</h2>
           </div>
           <a className="ghostLink" href={`/stocks/${latest.stock.code}/summary`}>进入详情页</a>
@@ -38,7 +38,7 @@ export function ReportDashboard({ latest, history }: { latest: LatestReportRespo
       <section className="panel span-5" id="exports">
         <div className="sectionHead">
           <div>
-            <div className="sectionEyebrow">Exports</div>
+            <div className="sectionEyebrow">导出物</div>
             <h2>导出物</h2>
           </div>
           <a className="ghostLink" href={`/stocks/${latest.stock.code}/exports`}>进入详情页</a>
@@ -58,7 +58,7 @@ export function ReportDashboard({ latest, history }: { latest: LatestReportRespo
       <section className="panel span-12" id="history">
         <div className="sectionHead">
           <div>
-            <div className="sectionEyebrow">History</div>
+            <div className="sectionEyebrow">历史</div>
             <h2>历史研究脉络</h2>
           </div>
           <a className="ghostLink" href={`/stocks/${latest.stock.code}/history`}>进入详情页</a>
@@ -78,7 +78,7 @@ export function ReportDashboard({ latest, history }: { latest: LatestReportRespo
       <section className="panel span-12" id="records">
         <div className="sectionHead">
           <div>
-            <div className="sectionEyebrow">Records</div>
+            <div className="sectionEyebrow">记录</div>
             <h2>最近历史记录</h2>
           </div>
         </div>

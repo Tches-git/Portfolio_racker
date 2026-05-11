@@ -179,6 +179,7 @@ class MarketEventDTO(BaseModel):
     status: str = "new"
     status_updated_at: str = ""
     status_note: str = ""
+    status_actor: str = ""
 
 
 class MarketEventListResponse(BaseModel):
@@ -200,13 +201,35 @@ class TrackingAlertDTO(BaseModel):
     alert_id: str
     stock_code: str
     event_id: str
+    rule_id: str = ""
+    rule_name: str = ""
     alert_type: str = "high_impact"
     title: str = ""
     message: str = ""
     severity: str = "medium"
+    priority: str = "P2"
     status: str = "open"
     created_at: str = ""
     suggested_action: str = ""
+    explanation: str = ""
+    handled_at: str = ""
+    handled_by: str = ""
+    handling_note: str = ""
+
+
+class AlertRuleDTO(BaseModel):
+    rule_id: str
+    name: str
+    description: str = ""
+    alert_type: str = ""
+    severity: str = "medium"
+    priority: str = "P2"
+    enabled: bool = True
+
+
+class AlertRuleListResponse(BaseModel):
+    items: list[AlertRuleDTO] = Field(default_factory=list)
+    total: int = 0
 
 
 class TrackingAlertListResponse(BaseModel):
@@ -215,6 +238,10 @@ class TrackingAlertListResponse(BaseModel):
     high_severity_count: int = 0
     risk_alert_count: int = 0
     source_degraded_count: int = 0
+    manual_review_count: int = 0
+    severity_counts: dict[str, int] = Field(default_factory=dict)
+    alert_type_counts: dict[str, int] = Field(default_factory=dict)
+    rule_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class DailyBriefingResponse(BaseModel):
@@ -252,6 +279,10 @@ class WatchlistImpactStockDTO(BaseModel):
     stock_name: str = ""
     event_count: int = 0
     high_impact_count: int = 0
+    alert_count: int = 0
+    risk_score: int = 0
+    risk_level: str = "low"
+    priority_action: str = ""
     latest_event_at: str = ""
 
 
@@ -263,6 +294,16 @@ class WatchlistSummaryDTO(BaseModel):
     high_severity_count: int = 0
     source_count: int = 0
     placeholder_count: int = 0
+    risk_score: int = 0
+    risk_level: str = "low"
+    risk_summary: str = ""
+    open_alert_count: int = 0
+    handled_event_count: int = 0
+    converted_event_count: int = 0
+    manual_review_count: int = 0
+    processing_rate: float = 0.0
+    dominant_rules: list[str] = Field(default_factory=list)
+    priority_actions: list[str] = Field(default_factory=list)
     last_refreshed_at: str = ""
     impacted_stocks: list[WatchlistImpactStockDTO] = Field(default_factory=list)
 

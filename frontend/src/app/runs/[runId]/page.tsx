@@ -34,7 +34,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
           <section className="panel span-12">
             <div className="sectionHead">
               <div>
-                <div className="sectionEyebrow">Trigger Event</div>
+                <div className="sectionEyebrow">触发事件</div>
                 <h2>触发事件上下文</h2>
               </div>
               {eventContext.event_id ? <Link className="ghostLink" href={`/events/${eventContext.event_id}`}>查看事件详情</Link> : null}
@@ -86,7 +86,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
         <section className="panel span-7">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Run Overview</div>
+              <div className="sectionEyebrow">任务总览</div>
               <h2>任务概览</h2>
             </div>
           </div>
@@ -138,7 +138,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
         <section className="panel span-5">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Artifacts</div>
+              <div className="sectionEyebrow">交付物</div>
               <h2>导出物</h2>
             </div>
           </div>
@@ -171,7 +171,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
         <section className="panel span-12">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Audit Trail</div>
+              <div className="sectionEyebrow">审计记录</div>
               <h2>协作审计</h2>
             </div>
           </div>
@@ -189,7 +189,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
         <section className="panel span-12">
           <div className="sectionHead">
             <div>
-              <div className="sectionEyebrow">Event Timeline</div>
+              <div className="sectionEyebrow">事件时间线</div>
               <h2>阶段事件时间线</h2>
             </div>
           </div>

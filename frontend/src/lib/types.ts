@@ -42,6 +42,7 @@ export type MarketEvent = {
   status: 'new' | 'reviewed' | 'ignored' | 'converted_to_report'
   status_updated_at: string
   status_note: string
+  status_actor: string
 }
 
 export type MarketEventListResponse = {
@@ -63,13 +64,35 @@ export type TrackingAlert = {
   alert_id: string
   stock_code: string
   event_id: string
+  rule_id: string
+  rule_name: string
   alert_type: string
   title: string
   message: string
   severity: 'high' | 'medium' | 'low'
+  priority: string
   status: string
   created_at: string
   suggested_action: string
+  explanation: string
+  handled_at: string
+  handled_by: string
+  handling_note: string
+}
+
+export type AlertRule = {
+  rule_id: string
+  name: string
+  description: string
+  alert_type: string
+  severity: 'high' | 'medium' | 'low'
+  priority: string
+  enabled: boolean
+}
+
+export type AlertRuleListResponse = {
+  items: AlertRule[]
+  total: number
 }
 
 export type TrackingAlertListResponse = {
@@ -78,6 +101,10 @@ export type TrackingAlertListResponse = {
   high_severity_count: number
   risk_alert_count: number
   source_degraded_count: number
+  manual_review_count: number
+  severity_counts: Record<string, number>
+  alert_type_counts: Record<string, number>
+  rule_counts: Record<string, number>
 }
 
 export type DailyBriefingResponse = {
@@ -115,6 +142,10 @@ export type WatchlistImpactStock = {
   stock_name: string
   event_count: number
   high_impact_count: number
+  alert_count: number
+  risk_score: number
+  risk_level: string
+  priority_action: string
   latest_event_at: string
 }
 
@@ -126,6 +157,16 @@ export type WatchlistSummary = {
   high_severity_count: number
   source_count: number
   placeholder_count: number
+  risk_score: number
+  risk_level: string
+  risk_summary: string
+  open_alert_count: number
+  handled_event_count: number
+  converted_event_count: number
+  manual_review_count: number
+  processing_rate: number
+  dominant_rules: string[]
+  priority_actions: string[]
   last_refreshed_at: string
   impacted_stocks: WatchlistImpactStock[]
 }

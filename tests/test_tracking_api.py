@@ -101,7 +101,7 @@ def test_event_analyze_endpoint_starts_run(monkeypatch):
     event = MarketEvent(event_id="e4", stock_code="600519", title="重大公告", provider="cninfo", impact_level="high", event_type="announcement")
     monkeypatch.setattr("app.api.server.find_market_event", lambda event_id, stock_codes=None: event)
     monkeypatch.setattr("app.api.server.save_events", lambda events: None)
-    monkeypatch.setattr("app.api.server.update_event_status", lambda event_id, status, note="": event)
+    monkeypatch.setattr("app.api.server.update_event_status", lambda event_id, status, note="", actor="system": event)
 
     class FakeRun:
         run_id = "run_event"
@@ -127,14 +127,16 @@ def test_event_analyze_endpoint_starts_run(monkeypatch):
 
 def test_event_status_endpoint_updates_event(monkeypatch):
     event = MarketEvent(event_id="e5", stock_code="600519", title="待复核事件")
-    updated = MarketEvent(event_id="e5", stock_code="600519", title="待复核事件", status="reviewed", status_note="已看")
+    updated = MarketEvent(event_id="e5", stock_code="600519", title="待复核事件", status="reviewed", status_note="已看", status_actor="alice")
     captured = {}
     monkeypatch.setattr("app.api.server.find_market_event", lambda event_id, stock_codes=None: event)
     monkeypatch.setattr("app.api.server.save_events", lambda events: captured.setdefault("saved", [item.event_id for item in events]))
-    monkeypatch.setattr("app.api.server.update_event_status", lambda event_id, status, note="": captured.update({"event_id": event_id, "status": status, "note": note}) or updated)
+    monkeypatch.setattr("app.api.server.update_event_status", lambda event_id, status, note="", actor="system": captured.update({"event_id": event_id, "status": status, "note": note, "actor": actor}) or updated)
 
-    payload = TestClient(app).patch("/api/v1/events/e5/status", json={"status": "reviewed", "note": "已看"}).json()
+    payload = TestClient(app).patch("/api/v1/events/e5/status", json={"status": "reviewed", "note": "已看"}, headers={"X-Actor": "alice"}).json()
 
     assert captured["saved"] == ["e5"]
     assert captured["status"] == "reviewed"
+    assert captured["actor"] == "alice"
     assert payload["status"] == "reviewed"
+    assert payload["status_actor"] == "alice"

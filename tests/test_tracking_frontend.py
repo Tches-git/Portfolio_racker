@@ -18,6 +18,9 @@ def test_events_page_uses_tracking_api_contract():
     assert "EventStatusControls" in page
     assert "EventStatusControls" in detail_page
     assert "updateEventStatus" in status_controls
+    assert "处理闭环" in status_controls
+    assert "status_actor" in types
+    assert "X-Actor" in api
     assert "/api/v1/events" in api
     assert "/api/v1/events/${eventId}/status" in api
     assert "mode=history" in page

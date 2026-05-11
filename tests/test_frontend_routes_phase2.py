@@ -42,6 +42,11 @@ def test_frontend_detail_routes_include_deeper_product_states():
     assert '设为当前' in exports_page
     assert '导出预览' in exports_page
     assert 'previewMode' in exports_page
+    assert 'EXPORT_CATEGORIES' in exports_page
+    assert 'mergeArtifacts' in exports_page
+    assert 'artifactCategory' in exports_page
+    assert 'event_commentary' in exports_page
+    assert '事件点评' in exports_page
     assert 'recordTone' in history_page
     assert '变化解释' in history_page
     assert '版本 Diff' in history_page
