@@ -22,9 +22,9 @@ export function CommandCenter({ initialCode }: { initialCode: string }) {
   return (
     <section className="commandCenter">
       <div className="commandCopy">
-        <div className="eyebrow">Command Center</div>
-        <h1>从一只股票开始研究</h1>
-        <p>输入代码后进入统一股票工作台：最新新闻、浏览器分析、摘要、历史、导出与任务状态都在同一条操作路径里。</p>
+        <div className="eyebrow">Market Tracking Desk</div>
+        <h1>今日金融追踪工作台</h1>
+        <p>围绕自选组合持续跟踪公告、行情、研报观点和风险事件；高影响消息可直接触发事件点评或研报更新。</p>
       </div>
       <div className="commandBox">
         <div className="commandInputRow">

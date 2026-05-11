@@ -23,7 +23,9 @@ def test_homepage_includes_rebuilt_command_center():
     assert 'CommandCenter' in home
     assert 'QuickActions' in home
     assert 'StockCardGrid' in home
-    assert '从一只股票开始研究' in command_center
+    assert '今日金融追踪工作台' in command_center
+    assert '关键事件雷达' in home
+    assert '今日研究简报' in home
     assert '组合跟踪' in stock_grid
 
 

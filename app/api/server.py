@@ -132,7 +132,7 @@ def analyze_event(
 
 @app.get("/api/v1/stocks/{stock_code}/events", response_model=StockEventTimelineResponse)
 def stock_events(stock_code: str, limit: int = 6) -> StockEventTimelineResponse:
-    collection = collect_stock_events(stock_code, limit=max(1, min(limit, 12)))
+    collection = collect_stock_events(stock_code, limit=max(1, min(limit, 12)), include_history=True)
     stock_name = collection.items[0].stock_name if collection.items else ""
     return StockEventTimelineResponse(
         stock_code=stock_code,

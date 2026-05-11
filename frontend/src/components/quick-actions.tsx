@@ -4,20 +4,20 @@ export function QuickActions({ stockCode, latestRunId }: { stockCode: string; la
   return (
     <section className="quickActions">
       <Link className="quickAction primaryAction" href={`/stocks/${stockCode}`}>
-        <span>继续研究</span>
+        <span>股票工作台</span>
         <strong>{stockCode} 工作台</strong>
       </Link>
-      <Link className="quickAction" href="/runs">
-        <span>查看队列</span>
-        <strong>任务中心</strong>
+      <Link className="quickAction" href="/events">
+        <span>实时消息</span>
+        <strong>事件追踪</strong>
       </Link>
-      <Link className="quickAction" href={`/stocks/${stockCode}/history`}>
-        <span>复盘变化</span>
-        <strong>历史脉络</strong>
+      <Link className="quickAction" href="/watchlist">
+        <span>自选范围</span>
+        <strong>组合跟踪</strong>
       </Link>
-      <Link className="quickAction" href={latestRunId ? `/runs/${latestRunId}` : `/stocks/${stockCode}/exports`}>
-        <span>交付追踪</span>
-        <strong>{latestRunId ? '最近任务' : '导出中心'}</strong>
+      <Link className="quickAction" href={latestRunId ? `/runs/${latestRunId}` : '/briefing'}>
+        <span>研究动作</span>
+        <strong>{latestRunId ? '最近任务' : '每日简报'}</strong>
       </Link>
     </section>
   )

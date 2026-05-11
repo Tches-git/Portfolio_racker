@@ -20,7 +20,7 @@ def test_events_endpoint_returns_tracking_contract(monkeypatch):
 
 def test_stock_events_endpoint_returns_timeline_contract(monkeypatch):
     event = MarketEvent(event_id="e2", stock_code="000858", stock_name="五粮液", title="券商点评", event_type="broker_view")
-    monkeypatch.setattr("app.api.server.collect_stock_events", lambda stock_code, limit=6: EventCollection(items=[event], total=1, source_count=1))
+    monkeypatch.setattr("app.api.server.collect_stock_events", lambda stock_code, limit=6, include_history=False: EventCollection(items=[event], total=1, source_count=1))
 
     payload = TestClient(app).get("/api/v1/stocks/000858/events").json()
 

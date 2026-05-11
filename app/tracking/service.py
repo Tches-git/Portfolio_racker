@@ -12,7 +12,7 @@ from app.tracking.normalizer import normalize_source_item
 DEFAULT_TRACKING_STOCKS = ["600519", "000858", "300750", "600036"]
 
 
-def collect_stock_events(stock_code: str, *, stock_name: str = "", limit: int = 6) -> EventCollection:
+def collect_stock_events(stock_code: str, *, stock_name: str = "", limit: int = 6, include_history: bool = False) -> EventCollection:
     """实时采集单只股票的追踪事件。"""
     raw_items: list[dict] = []
     quote = _safe_call(lambda: fetch_live_quotes(stock_code), default={})
@@ -29,6 +29,8 @@ def collect_stock_events(stock_code: str, *, stock_name: str = "", limit: int = 
     ]
     events = dedupe_events(live_events)
     save_events(events)
+    if not include_history:
+        return summarize_events(events)
     historical = query_events(stock_code=stock_code, limit=max(limit * 2, 12))
     combined = sorted(dedupe_events(events + historical), key=lambda item: item.published_at or item.collected_at, reverse=True)
     return summarize_events(combined[: max(1, limit)])
