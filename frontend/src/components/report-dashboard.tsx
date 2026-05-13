@@ -1,4 +1,4 @@
-import { API_BASE } from '../lib/api'
+import { sameOriginApiUrl } from '../lib/api'
 import type { LatestReportResponse, StockHistoryResponse } from '../lib/types'
 
 export function ReportDashboard({ latest, history }: { latest: LatestReportResponse | null; history: StockHistoryResponse | null }) {
@@ -49,7 +49,7 @@ export function ReportDashboard({ latest, history }: { latest: LatestReportRespo
               <div className="itemTitle">{item.kind}</div>
               <div className="itemMeta">{item.filename}</div>
               <div className="pathText">{item.path}</div>
-              <a className="downloadLink" href={`${API_BASE}${item.download_url}`} target="_blank" rel="noreferrer">下载 / 查看</a>
+              <a className="downloadLink" href={sameOriginApiUrl(item.download_url)} target="_blank" rel="noreferrer">下载 / 查看</a>
             </div>
           )) : <div className="card">当前未发现导出物。</div>}
         </div>

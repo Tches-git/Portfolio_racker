@@ -14,6 +14,7 @@ def dedupe_events(events: list[MarketEvent]) -> list[MarketEvent]:
     for event in events:
         parent = _find_parent(event, ordered)
         if parent is None:
+            event.duplicate_count = max(1, int(getattr(event, "duplicate_count", 0) or 1))
             ordered.append(event)
             continue
         merge_duplicate_event(parent, event)
@@ -30,6 +31,7 @@ def merge_duplicate_event(parent: MarketEvent, event: MarketEvent) -> MarketEven
     """把重复事件的信息合并到主事件上。"""
     event.is_duplicate = True
     event.parent_event_id = parent.event_id
+    parent.duplicate_count = max(1, int(getattr(parent, "duplicate_count", 0) or 1)) + max(1, int(getattr(event, "duplicate_count", 0) or 1))
     fallback_sources = [] if event.related_sources else [_source_from_event(event)]
     parent.related_sources = _unique_sources(parent.related_sources + event.related_sources + fallback_sources)
     if not parent.summary and event.summary:

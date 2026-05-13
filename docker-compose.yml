@@ -1,0 +1,92 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-portfolio_tracker}
+      POSTGRES_USER: ${POSTGRES_USER:-portfolio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-portfolio}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-portfolio_tracker}
+      REDIS_URL: redis://redis:6379/0
+      AUTH_REQUIRED: "true"
+      ENABLE_SIGNUP: ${ENABLE_SIGNUP:-true}
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - output_data:/app/output
+      - app_data:/app/data
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.api.server:app --host 0.0.0.0 --port 8000"]
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-portfolio}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-portfolio_tracker}
+      REDIS_URL: redis://redis:6379/0
+      AUTH_REQUIRED: "true"
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - output_data:/app/output
+      - app_data:/app/data
+    command: ["python", "-c", "import time; print('worker placeholder: phase 1 run manager is still API in-process'); time.sleep(31536000)"]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: http://api:8000
+      NEXT_PUBLIC_API_BASE_URL: ""
+    depends_on:
+      - api
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-:80}
+      CADDY_EMAIL: ${CADDY_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:
+  output_data:
+  app_data:
+  caddy_data:
+  caddy_config:

@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -108,6 +108,56 @@ def _safe_float(val) -> float:
         return float(s)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _normalize_daily_bar(row) -> dict:
+    date_value = row.get("日期", row.get("date", ""))
+    if hasattr(date_value, "strftime"):
+        date_text = date_value.strftime("%Y-%m-%d")
+    else:
+        date_text = str(date_value).strip()
+    return {
+        "date": date_text,
+        "open": _safe_float(row.get("开盘", row.get("open", 0))),
+        "high": _safe_float(row.get("最高", row.get("high", 0))),
+        "low": _safe_float(row.get("最低", row.get("low", 0))),
+        "close": _safe_float(row.get("收盘", row.get("close", 0))),
+        "volume": _safe_float(row.get("成交量", row.get("volume", 0))),
+        "amount": _safe_float(row.get("成交额", row.get("amount", 0))),
+        "change_pct": _safe_float(row.get("涨跌幅", row.get("change_pct", 0))),
+        "turnover": _safe_float(row.get("换手率", row.get("turnover", 0))),
+    }
+
+
+def get_stock_daily_bars(code: str, days: int = 90) -> list[dict]:
+    """获取 A 股日线行情，返回按日期升序排列的 OHLCV 数据。"""
+    code = _validate_stock_code(code)
+    days = max(1, min(int(days or 90), 180))
+    cache_key = f"daily_bars_{code}_{days}"
+    cached = _read_cache(cache_key, max_age=1800)
+    if cached and isinstance(cached.get("items"), list):
+        return list(cached["items"])
+
+    import akshare as ak
+
+    end = datetime.now()
+    start = end - timedelta(days=max(days * 3, 90))
+    df = ak.stock_zh_a_hist(
+        symbol=code,
+        period="daily",
+        start_date=start.strftime("%Y%m%d"),
+        end_date=end.strftime("%Y%m%d"),
+        adjust="qfq",
+    )
+    if df is None or df.empty:
+        _write_cache(cache_key, {"items": []})
+        return []
+    items = [_normalize_daily_bar(row) for _, row in df.iterrows()]
+    items = [item for item in items if item["date"] and item["close"] > 0]
+    items.sort(key=lambda item: item["date"])
+    items = items[-days:]
+    _write_cache(cache_key, {"items": items})
+    return items
 
 
 def _parse_value(val) -> float:

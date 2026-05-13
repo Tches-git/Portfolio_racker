@@ -4,18 +4,25 @@ import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
+import type { AuthUser } from '../lib/types'
 import { SidebarNav } from './sidebar-nav'
+import { UserMenu } from './user-menu'
 
 const TOP_LINKS = [
-  { label: '总览', href: '/' },
-  { label: '事件', href: '/events' },
-  { label: '预警', href: '/alerts' },
+  { label: '驾驶舱', href: '/' },
   { label: '组合', href: '/watchlist' },
-  { label: '任务', href: '/runs' },
+  { label: '事件预警', href: '/events' },
+  { label: '行情', href: '/markets' },
+  { label: '任务交付', href: '/runs' },
 ]
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ children, user, runCenter }: { children: ReactNode; user: AuthUser | null; runCenter?: ReactNode }) {
   const pathname = usePathname()
+  const isAuthRoute = pathname === '/login' || pathname === '/register'
+
+  if (isAuthRoute) {
+    return <>{children}</>
+  }
 
   return (
     <div className="appFrame">
@@ -34,7 +41,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <div className="sidebarCard">
           <div className="sidebarCardTitle">工作区</div>
-          <div className="sidebarCardText">本地单用户模式 · 事件历史、预警处理、研报交付在同一工作台内闭环。</div>
+          <div className="sidebarCardText">多用户工作区 · 当前账号独立数据空间，事件历史、预警处理、研报交付在同一工作台内闭环。</div>
         </div>
       </aside>
 
@@ -42,7 +49,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <header className="topbar">
           <Link className="topbarProduct" href="/">
             <span className="vercelTriangle" aria-hidden />
-            <span>金融消息追踪平台</span>
+            <span>组合风险驾驶舱</span>
           </Link>
           <nav className="topbarNav" aria-label="Global navigation">
             {TOP_LINKS.map((item) => {
@@ -55,10 +62,17 @@ export function AppShell({ children }: { children: ReactNode }) {
             })}
           </nav>
           <div className="topbarActions">
-            <Link className="topbarCommand" href="/stocks/600519">打开 600519</Link>
-            <span className="topbarMeta"><span className="liveDot" aria-hidden /> 本地接口</span>
+            <Link className="topbarCommand" href="/watchlist">新建组合</Link>
+            <span className="topbarMeta"><span className="liveDot" aria-hidden /> 当前账号独立数据</span>
+            {user ? <UserMenu user={user} /> : (
+              <div className="authLinks">
+                <Link className="topbarCommand" href="/login">登录</Link>
+                <Link className="topbarCommand" href="/register">注册</Link>
+              </div>
+            )}
           </div>
         </header>
+        {runCenter}
         {children}
       </div>
     </div>

@@ -1,11 +1,11 @@
 import Link from 'next/link'
 
-export function QuickActions({ stockCode, latestRunId }: { stockCode: string; latestRunId?: string }) {
+export function QuickActions({ stockCode, latestRunId }: { stockCode?: string; latestRunId?: string }) {
   return (
     <section className="quickActions">
-      <Link className="quickAction primaryAction" href={`/stocks/${stockCode}`}>
+      <Link className="quickAction primaryAction" href={stockCode ? `/stocks/${stockCode}` : '/watchlist'}>
         <span>股票工作台</span>
-        <strong>{stockCode} 工作台</strong>
+        <strong>{stockCode ? `${stockCode} 工作台` : '先建立组合'}</strong>
       </Link>
       <Link className="quickAction" href="/events">
         <span>实时消息</span>

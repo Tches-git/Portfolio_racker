@@ -145,6 +145,7 @@ def _event_from_dict(item: dict) -> MarketEvent:
         related_sources=list(item.get("related_sources", []) or []),
         is_duplicate=bool(item.get("is_duplicate", False)),
         parent_event_id=str(item.get("parent_event_id", "")),
+        duplicate_count=int(item.get("duplicate_count", 0) or 0),
         status=str(item.get("status", "new") or "new"),
         status_updated_at=str(item.get("status_updated_at", "")),
         status_note=str(item.get("status_note", "")),

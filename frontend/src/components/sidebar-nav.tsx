@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 function stockCodeFromPath(pathname: string) {
-  const stockMatch = pathname.match(/^\/stocks\/([^/]+)/)
+  const stockMatch = pathname.match(/^\/(?:stocks|markets)\/([^/]+)/)
   if (stockMatch?.[1]) return stockMatch[1]
   return ''
 }
@@ -15,29 +15,29 @@ export function SidebarNav() {
   const inRunDetail = /^\/runs\/[^/]+/.test(pathname)
   const navGroups = [
     {
-      title: '核心导航',
+      title: '工作台',
       items: [
-        { label: '首页总览', href: '/', icon: '⌂' },
-        { label: '事件追踪', href: '/events', icon: '◇' },
-        { label: '预警中心', href: '/alerts', icon: '!' },
-        { label: '每日简报', href: '/briefing', icon: '☰' },
-        { label: '任务中心', href: '/runs', icon: '▣' },
-        ...(stockCode ? [{ label: '股票工作台', href: `/stocks/${stockCode}`, icon: '◉' }] : []),
+        { label: '组合风险驾驶舱', href: '/', icon: '▦' },
+        { label: '组合管理', href: '/watchlist', icon: '◫' },
+        { label: '事件预警处理台', href: '/events', icon: '!' },
+        { label: '行情展示', href: '/markets', icon: '⌁' },
+        { label: '任务交付中心', href: '/runs', icon: '▣' },
       ],
     },
     ...(stockCode ? [{
-      title: '股票工作台',
+      title: '当前股票',
       items: [
-        { label: '摘要详情', href: `/stocks/${stockCode}/summary`, icon: '≡' },
-        { label: '事件时间线', href: `/stocks/${stockCode}/timeline`, icon: '◇' },
-        { label: '历史脉络', href: `/stocks/${stockCode}/history`, icon: '↺' },
-        { label: '导出中心', href: `/stocks/${stockCode}/exports`, icon: '⇩' },
+        { label: `${stockCode} 情报中心`, href: `/stocks/${stockCode}`, icon: '◉' },
+        { label: '行情', href: `/markets/${stockCode}`, icon: '⌁' },
+        { label: '摘要', href: `/stocks/${stockCode}?tab=summary`, icon: '≡' },
+        { label: '事件', href: `/stocks/${stockCode}?tab=timeline`, icon: '◇' },
+        { label: '复盘', href: `/stocks/${stockCode}?tab=history`, icon: '↺' },
+        { label: '交付', href: `/stocks/${stockCode}?tab=exports`, icon: '⇩' },
       ],
     }] : []),
     {
-      title: '辅助入口',
+      title: '上下文',
       items: [
-        { label: '组合跟踪', href: '/watchlist', icon: '◍' },
         ...(inRunDetail ? [{ label: '当前任务详情', href: pathname, icon: '◎' }] : []),
       ],
     },

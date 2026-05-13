@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.api.server import app
 from app.tracking.models import EventCollection, MarketEvent
+from tests.helpers import authenticated_client
 
 
 def test_alerts_endpoint_returns_alert_summary(monkeypatch):
@@ -15,7 +16,8 @@ def test_alerts_endpoint_returns_alert_summary(monkeypatch):
     )
     monkeypatch.setattr("app.api.server.collect_market_events", lambda stock_codes=None, limit_per_stock=4: collection)
 
-    payload = TestClient(app).get("/api/v1/alerts").json()
+    with authenticated_client() as (client, _user):
+        payload = client.get("/api/v1/alerts?stock_codes=600519").json()
 
     assert payload["total"] >= 2
     assert payload["high_severity_count"] >= 1
@@ -35,8 +37,9 @@ def test_alerts_endpoint_filters_processed_status(monkeypatch):
     )
     monkeypatch.setattr("app.api.server.collect_market_events", lambda stock_codes=None, limit_per_stock=4: collection)
 
-    reviewed = TestClient(app).get("/api/v1/alerts?status=reviewed").json()
-    open_alerts = TestClient(app).get("/api/v1/alerts?status=open").json()
+    with authenticated_client() as (client, _user):
+        reviewed = client.get("/api/v1/alerts?stock_codes=600519&status=reviewed").json()
+        open_alerts = client.get("/api/v1/alerts?stock_codes=600519&status=open").json()
 
     assert reviewed["total"] == 1
     assert reviewed["items"][0]["status"] == "reviewed"
@@ -60,9 +63,10 @@ def test_alerts_endpoint_filters_by_mode_severity_type_and_rule(monkeypatch):
         high_impact_count=1,
         source_count=2,
     )
-    monkeypatch.setattr("app.api.server.collect_historical_events", lambda stock_codes=None, limit=100: collection)
+    monkeypatch.setattr("app.api.server.list_user_events", lambda db, user_id, stock_codes=None, limit=100, **kwargs: collection)
 
-    payload = TestClient(app).get("/api/v1/alerts?mode=history&severity=high&alert_type=manual_review&rule_id=manual_review").json()
+    with authenticated_client() as (client, _user):
+        payload = client.get("/api/v1/alerts?mode=history&severity=high&alert_type=manual_review&rule_id=manual_review").json()
 
     assert payload["total"] == 1
     assert payload["items"][0]["rule_id"] == "manual_review"
@@ -78,7 +82,8 @@ def test_daily_briefing_endpoint_returns_key_events(monkeypatch):
     )
     monkeypatch.setattr("app.api.server.collect_market_events", lambda stock_codes=None, limit_per_stock=4: collection)
 
-    payload = TestClient(app).get("/api/v1/briefing/daily").json()
+    with authenticated_client() as (client, _user):
+        payload = client.get("/api/v1/briefing/daily?stock_codes=600519").json()
 
     assert payload["total_events"] == 1
     assert payload["key_events"][0]["event_id"] == "e1"

@@ -18,13 +18,13 @@ _EXPORT_KEYS = {
 }
 
 
-def _resolve_existing_export_paths(state: AnalysisState) -> dict[str, Path]:
+def _resolve_existing_export_paths(state: AnalysisState, output_dir: Path) -> dict[str, Path]:
     paths: dict[str, Path] = {}
     for kind, key in _EXPORT_KEYS.items():
         name = str(state.sections.get(key, "") or "").strip()
         if not name:
             continue
-        path = OUTPUT_DIR / name
+        path = output_dir / name
         if path.exists():
             paths[kind] = path
     return paths
@@ -135,19 +135,19 @@ def _write_pdf_report(state: AnalysisState, path: Path) -> Path | None:
 
 
 def save_output_files(state: AnalysisState, *, root: Path | None = None, timestamp: str | None = None) -> tuple[Path, Path]:
-    del root
-    existing_paths = _resolve_existing_export_paths(state)
+    output_dir = root or OUTPUT_DIR
+    existing_paths = _resolve_existing_export_paths(state, output_dir)
     if "report" in existing_paths and "trace" in existing_paths:
         return existing_paths["report"], existing_paths["trace"]
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     export_timestamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_code = state.stock_code or "unknown"
-    report_path = OUTPUT_DIR / f"report_{safe_code}_{export_timestamp}.md"
-    trace_path = OUTPUT_DIR / f"trace_{safe_code}_{export_timestamp}.log"
-    sources_path = OUTPUT_DIR / f"sources_{safe_code}_{export_timestamp}.json"
-    html_path = OUTPUT_DIR / f"report_{safe_code}_{export_timestamp}.html"
-    pdf_path = OUTPUT_DIR / f"report_{safe_code}_{export_timestamp}.pdf"
+    report_path = output_dir / f"report_{safe_code}_{export_timestamp}.md"
+    trace_path = output_dir / f"trace_{safe_code}_{export_timestamp}.log"
+    sources_path = output_dir / f"sources_{safe_code}_{export_timestamp}.json"
+    html_path = output_dir / f"report_{safe_code}_{export_timestamp}.html"
+    pdf_path = output_dir / f"report_{safe_code}_{export_timestamp}.pdf"
 
     report_path.write_text(state.final_report, encoding="utf-8")
     trace_path.write_text("\n".join(state.trace), encoding="utf-8")

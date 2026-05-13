@@ -39,10 +39,10 @@ def test_recent_runs_and_launcher_link_to_run_detail():
 
 def test_history_page_has_master_detail_snapshot_hint():
     history_page = (ROOT / 'frontend/src/app/stocks/[stockCode]/history/page.tsx').read_text(encoding='utf-8')
+    stock_workbench = (ROOT / 'frontend/src/components/workbench/stock-workbench.tsx').read_text(encoding='utf-8')
 
-    assert 'selectedRecord' in history_page
-    assert 'searchParams' in history_page
-    assert '当前选中记录' in history_page
-    assert 'fetchEventImpactReview' in history_page
-    assert '历史事件影响复盘' in history_page
-    assert '事件点评导出' in history_page
+    assert 'redirect(`/stocks/${stockCode}?tab=history`)' in history_page
+    assert 'HistoryTab' in stock_workbench
+    assert '事件复盘' in stock_workbench
+    assert '研究记忆' in stock_workbench
+    assert 'impact_review' in stock_workbench

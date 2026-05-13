@@ -1,3 +1,28 @@
+export type AuthUser = {
+  id: string
+  email: string
+  username: string
+  role: string
+  is_active: boolean
+  created_at: string
+  last_login_at: string
+}
+
+export type AuthResponse = {
+  user: AuthUser
+}
+
+export type AuthLoginRequest = {
+  email_or_username: string
+  password: string
+}
+
+export type AuthRegisterRequest = {
+  email: string
+  username: string
+  password: string
+}
+
 export type LatestReportResponse = {
   stock: { code: string; name: string; industry: string }
   summary: { rating: string; rating_score: number; conclusion_brief: string }
@@ -58,6 +83,49 @@ export type MarketEventListResponse = {
 export type StockEventTimelineResponse = MarketEventListResponse & {
   stock_code: string
   stock_name: string
+}
+
+export type MarketDailyBar = {
+  date: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  amount: number
+  change_pct: number
+  turnover: number
+}
+
+export type MarketQuote = {
+  stock_code: string
+  stock_name: string
+  price: number
+  change: number
+  change_pct: number
+  open: number
+  high: number
+  low: number
+  previous_close: number
+  volume: number
+  amount: number
+  turnover: number
+  market_cap: number
+  pe_ratio: number
+  pb_ratio: number
+  updated_at: string
+  source_status: string
+  provider: string
+}
+
+export type MarketWorkbenchResponse = {
+  stock_code: string
+  stock_name: string
+  range: '30d' | '90d' | '180d'
+  quote: MarketQuote
+  daily_bars: MarketDailyBar[]
+  fallback_message: string
+  actions: WorkbenchAction[]
 }
 
 export type TrackingAlert = {
@@ -341,4 +409,76 @@ export type AnalysisRunListResponse = {
   failed_count: number
   stock_groups: Array<{ stock_code: string; total: number; active_count: number; failed_count: number; archived_count: number; latest_run_id: string; latest_status: string; latest_updated_at: string }>
   workspace: { tracked_stocks: string[]; most_active_stock: string; latest_completed_stock: string; failed_stock_count: number; history_backed_stock_count: number; recommended_concurrency: number; active_limit_reached: boolean; observability_status: string; collaboration_ready: boolean; collaborator_count: number; audited_action_count: number; archived_run_count: number; stale_run_count: number; recovery_status: string; worker_count: number; retry_scheduled_count: number; queue_mode: string; store_backend: string; schema_version: number; wal_enabled: boolean; backup_available: boolean; last_backup_path: string; ops_status: string; alert_count: number; failure_rate: number; avg_duration_s: number; p95_duration_s: number }
+}
+
+export type WorkbenchAction = {
+  label: string
+  href: string
+  method: string
+  action_type: string
+  target_id: string
+  variant: string
+}
+
+export type DashboardSetup = {
+  title: string
+  description: string
+  suggested_stock_codes: string[]
+  primary_action: WorkbenchAction
+}
+
+export type DashboardPortfolioSummary = {
+  watchlist_count: number
+  stock_count: number
+  event_count: number
+  alert_count: number
+  high_impact_count: number
+  manual_review_count: number
+  risk_score: number
+  risk_level: string
+  risk_summary: string
+  processing_rate: number
+  primary_watchlist_id: string
+}
+
+export type DashboardResponse = {
+  mode: 'setup' | 'active'
+  setup: DashboardSetup
+  watchlists: WatchlistListResponse
+  portfolio_summary: DashboardPortfolioSummary
+  risk_queue: TrackingAlertListResponse
+  today_briefing: DailyBriefingResponse
+  latest_events: MarketEventListResponse
+  recent_runs: AnalysisRunListResponse
+  actions: WorkbenchAction[]
+}
+
+export type EventWorkbenchResponse = {
+  view: 'events' | 'alerts'
+  events: MarketEventListResponse
+  alerts: TrackingAlertListResponse
+  filters: Record<string, string>
+  selected_event: MarketEvent | null
+  actions: WorkbenchAction[]
+}
+
+export type StockWorkbenchResponse = {
+  stock_code: string
+  stock_name: string
+  active_tab: 'summary' | 'timeline' | 'history' | 'exports'
+  is_tracked: boolean
+  latest_report: LatestReportResponse | null
+  history: StockHistoryResponse | null
+  timeline: StockEventTimelineResponse
+  impact_review: EventImpactReviewResponse
+  related_watchlists: Watchlist[]
+  related_runs: AnalysisRunListResponse
+  exports: Array<{ kind: string; filename: string; path: string; download_url: string }>
+  actions: WorkbenchAction[]
+}
+
+export type RunWorkbenchResponse = {
+  runs: AnalysisRunListResponse
+  selected_run: AnalysisRunResponse | null
+  actions: WorkbenchAction[]
 }

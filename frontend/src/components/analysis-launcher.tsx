@@ -147,7 +147,7 @@ export function AnalysisLauncher({ initialCode, initialRuns = [] }: { initialCod
               className="input"
               value={code}
               onChange={(event) => setCode(event.target.value)}
-              placeholder="输入股票代码，如 600519"
+              placeholder="输入 6 位 A 股股票代码"
             />
             <button className="button" onClick={() => void startRun()} disabled={!normalized || loading || isRefreshing}>
               {loading || isRefreshing ? '分析运行中...' : '开始分析'}

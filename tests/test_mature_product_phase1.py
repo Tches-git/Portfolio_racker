@@ -17,23 +17,22 @@ def test_layout_includes_global_run_center():
 
 def test_homepage_includes_rebuilt_command_center():
     home = (ROOT / 'frontend/src/app/page.tsx').read_text(encoding='utf-8')
-    command_center = (ROOT / 'frontend/src/components/command-center.tsx').read_text(encoding='utf-8')
-    stock_grid = (ROOT / 'frontend/src/components/stock-card-grid.tsx').read_text(encoding='utf-8')
+    dashboard = (ROOT / 'frontend/src/components/workbench/dashboard-overview.tsx').read_text(encoding='utf-8')
+    setup = (ROOT / 'frontend/src/components/workbench/setup-wizard.tsx').read_text(encoding='utf-8')
 
-    assert 'CommandCenter' in home
-    assert 'QuickActions' in home
-    assert 'StockCardGrid' in home
-    assert '打开股票情报工作台' in command_center
-    assert '报告中心' in home
-    assert '常用研究报告' in home
-    assert '关键事件列表' in home
-    assert '今日主题' in home
-    assert '组合跟踪' in stock_grid
+    assert 'DashboardOverview' in home
+    assert 'fetchDashboard' in home
+    assert '组合风险驾驶舱' in home
+    assert '创建第一个组合' in setup
+    assert '最新关键事件' in dashboard
+    assert '今日主题' in dashboard
+    assert '新工作区' in setup
 
 
 def test_exports_page_has_master_detail_snapshot():
     exports_page = (ROOT / 'frontend/src/app/stocks/[stockCode]/exports/page.tsx').read_text(encoding='utf-8')
+    stock_workbench = (ROOT / 'frontend/src/components/workbench/stock-workbench.tsx').read_text(encoding='utf-8')
 
-    assert 'selectedArtifact' in exports_page
-    assert 'searchParams' in exports_page
-    assert '当前选中导出物' in exports_page
+    assert 'redirect(`/stocks/${stockCode}?tab=exports`)' in exports_page
+    assert 'ExportsTab' in stock_workbench
+    assert '导出物' in stock_workbench

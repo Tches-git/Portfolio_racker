@@ -1,22 +1,82 @@
 """产品前端 API 入口（兼容 Phase 1/2）。"""
 from __future__ import annotations
 
-from fastapi import FastAPI, Header, HTTPException
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
 
-from app.api.download import ExportNotFoundError, resolve_export_file
+from app.auth.dependencies import require_current_user
+from app.auth.rate_limit import RateLimitExceeded, check_rate_limit
+from app.auth.security import create_access_token
+from app.auth.service import AuthError, authenticate_user, register_user, user_to_dto
+from app.api.download import ExportNotFoundError
 from app.api.mappers import build_health_response, map_history_record
 from app.api.run_manager import RunActionError, RunNotFoundError, run_manager
-from app.api.schemas import AlertRuleDTO, AlertRuleListResponse, AnalysisRunCreateRequest, AnalysisRunListResponse, AnalysisRunResponse, BatchRunCreateRequest, BatchRunCreateResponse, DailyBriefingResponse, EventAnalyzeRequest, EventImpactReplayItemDTO, EventImpactReviewResponse, EventStatusUpdateRequest, HealthResponse, LatestReportResponse, MarketEventDTO, MarketEventListResponse, OpsMetricsResponse, ReportDiffResponse, RunAssignmentRequest, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, StoreBackupResponse, StoreHealthResponse, TrackingAlertDTO, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDTO, WatchlistDetailResponse, WatchlistImpactStockDTO, WatchlistListResponse, WatchlistSummaryDTO, WorkspaceStocksResponse
+from app.api.schemas import (
+    AlertRuleDTO,
+    AlertRuleListResponse,
+    AnalysisRunCreateRequest,
+    AnalysisRunListResponse,
+    AnalysisRunResponse,
+    AuthLoginRequest,
+    AuthRegisterRequest,
+    AuthResponse,
+    AuthUserDTO,
+    BatchRunCreateRequest,
+    BatchRunCreateResponse,
+    DailyBriefingResponse,
+    DashboardPortfolioSummaryDTO,
+    DashboardResponse,
+    DashboardSetupDTO,
+    EventAnalyzeRequest,
+    EventImpactReplayItemDTO,
+    EventImpactReviewResponse,
+    EventStatusUpdateRequest,
+    EventWorkbenchResponse,
+    HealthResponse,
+    LatestReportResponse,
+    MarketDailyBarDTO,
+    MarketEventDTO,
+    MarketEventListResponse,
+    MarketQuoteDTO,
+    MarketWorkbenchResponse,
+    OpsMetricsResponse,
+    ReportDiffResponse,
+    RunAssignmentRequest,
+    RunWorkbenchResponse,
+    StockEventTimelineResponse,
+    StockHistoryResponse,
+    StockNewsResponse,
+    StockWorkbenchResponse,
+    StoreBackupResponse,
+    StoreHealthResponse,
+    TrackingAlertDTO,
+    TrackingAlertListResponse,
+    WatchlistCreateRequest,
+    WatchlistDTO,
+    WatchlistDetailResponse,
+    WatchlistImpactStockDTO,
+    WatchlistListResponse,
+    WatchlistSummaryDTO,
+    WorkbenchActionDTO,
+    WorkspaceStocksResponse,
+)
 from app.api.services import NotFoundError, get_latest_report, get_stock_history
-from app.data_source.akshare_client import get_recent_news
-from app.memory.store import get_memory_store
-from app.tracking.service import collect_historical_events, collect_market_events, collect_stock_events, find_market_event, summarize_events
-from app.tracking.history import save_events, update_event_status
+from app.config import AUTH_COOKIE_NAME, AUTH_TOKEN_TTL_SECONDS, LOGIN_RATE_LIMIT_PER_HOUR, OUTPUT_DIR, SIGNUP_RATE_LIMIT_PER_HOUR
+from app.data_source.akshare_client import get_recent_news, get_stock_daily_bars
+from app.data_source.live_tools import fetch_live_quotes
+from app.db.models import User
+from app.db.repositories import create_user_watchlist, get_user_event, get_user_export_artifact, get_user_watchlist, list_user_events, list_user_watchlists, mark_user_watchlist_refreshed, save_user_events, save_user_run, update_user_event_status
+from app.db.session import get_db
+from app.memory.db_store import UserMemoryStore
+from app.tracking.models import EventCollection
+from app.tracking.service import collect_market_events, collect_stock_events, summarize_events
 from app.tracking.alerts import build_tracking_alerts, list_alert_rules
 from app.tracking.briefing import build_daily_briefing
-from app.tracking.watchlist import create_watchlist, get_watchlist, list_watchlists, mark_watchlist_refreshed
 
 app = FastAPI(title="AI Research Assistant API", version="0.1.0")
 app.add_middleware(
@@ -26,7 +86,10 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
     ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -34,6 +97,60 @@ app.add_middleware(
 
 def _actor(actor: str = Header(default='system', alias='X-Actor'), role: str = Header(default='admin', alias='X-Role')) -> tuple[str, str]:
     return actor or 'system', role or 'viewer'
+
+
+def _run_role_for_user(user: User) -> str:
+    return "admin" if user.role == "admin" else "analyst"
+
+
+def _run_actor_for_request(user: User, actor_header: str, role_header: str) -> tuple[str, str]:
+    return user.username, _run_role_for_user(user)
+
+
+def _assert_run_access(run, user: User) -> None:
+    if getattr(run, "user_id", "") != user.id:
+        raise HTTPException(status_code=404, detail=f"未找到运行任务: {run.run_id}")
+
+
+def _sync_user_run(db: Session, user: User, run) -> None:
+    save_user_run(db, user_id=user.id, run=run)
+
+
+def _user_memory(db: Session, user: User) -> UserMemoryStore:
+    return UserMemoryStore(db, user.id)
+
+
+def _user_output_dir(user: User) -> Path:
+    return OUTPUT_DIR / "users" / user.id
+
+
+def _require_admin(user: User) -> None:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+
+
+def _parse_stock_codes(stock_codes: str) -> list[str]:
+    return [part.strip() for part in stock_codes.split(",") if part.strip()] if stock_codes else []
+
+
+def _user_tracking_codes(db: Session, *, user_id: str, stock_codes: str = "") -> list[str]:
+    explicit_codes = _parse_stock_codes(stock_codes)
+    if explicit_codes:
+        return explicit_codes
+    codes: list[str] = []
+    seen: set[str] = set()
+    for watchlist in list_user_watchlists(db, user_id=user_id):
+        for code in watchlist.stock_codes:
+            normalized = str(code or "").strip()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                codes.append(normalized)
+    return codes
+
+
+def _user_is_tracking_stock(db: Session, *, user_id: str, stock_code: str) -> bool:
+    normalized = str(stock_code or "").strip()
+    return bool(normalized and normalized in _user_tracking_codes(db, user_id=user_id))
 
 
 def _market_event_list_response(collection, *, mode: str = "realtime") -> MarketEventListResponse:
@@ -108,6 +225,84 @@ def _daily_briefing_response(briefing) -> DailyBriefingResponse:
         themes=briefing.themes,
         review_required_events=[MarketEventDTO(**event.__dict__) for event in briefing.review_required_events],
     )
+
+
+def _market_range_to_days(range_value: str) -> tuple[str, int]:
+    mapping = {"30d": 30, "90d": 90, "180d": 180}
+    normalized = str(range_value or "90d").strip().lower()
+    if normalized not in mapping:
+        normalized = "90d"
+    return normalized, mapping[normalized]
+
+
+def _is_valid_a_stock_code(stock_code: str) -> bool:
+    return stock_code.isdigit() and len(stock_code) == 6
+
+
+def _to_float(value) -> float:
+    try:
+        if value is None or str(value).strip() in {"", "-", "--", "None", "nan"}:
+            return 0.0
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _quote_stock_name(stock_code: str, quote: dict) -> str:
+    name = str(quote.get("stock_name") or quote.get("name") or "").strip()
+    if name:
+        return name
+    title = str(quote.get("title") or "").strip()
+    suffix = " 实时行情快照"
+    if title.endswith(suffix):
+        return title[:-len(suffix)] or stock_code
+    return stock_code
+
+
+def _market_quote_response(stock_code: str, quote: dict, bars: list[dict], fallback_message: str = "") -> MarketQuoteDTO:
+    latest = bars[-1] if bars else {}
+    previous = bars[-2] if len(bars) >= 2 else {}
+    price = _to_float(quote.get("price")) or _to_float(latest.get("close"))
+    previous_close = _to_float(previous.get("close"))
+    change = price - previous_close if price and previous_close else 0.0
+    change_pct = round(change / previous_close * 100, 4) if previous_close else _to_float(latest.get("change_pct"))
+    has_quote = bool(quote and (price or quote.get("title") or quote.get("provider")))
+    has_bars = bool(bars)
+    source_status = "ok" if has_quote and has_bars and not fallback_message else "partial" if has_quote or has_bars else "degraded"
+    return MarketQuoteDTO(
+        stock_code=stock_code,
+        stock_name=_quote_stock_name(stock_code, quote),
+        price=price,
+        change=round(change, 4),
+        change_pct=change_pct,
+        open=_to_float(latest.get("open")),
+        high=_to_float(latest.get("high")),
+        low=_to_float(latest.get("low")),
+        previous_close=previous_close,
+        volume=_to_float(latest.get("volume")),
+        amount=_to_float(latest.get("amount")),
+        turnover=_to_float(latest.get("turnover")),
+        market_cap=_to_float(quote.get("market_cap")),
+        pe_ratio=_to_float(quote.get("pe_ratio")),
+        pb_ratio=_to_float(quote.get("pb_ratio")),
+        updated_at=str(quote.get("time") or latest.get("date") or ""),
+        source_status=source_status,
+        provider=str(quote.get("provider") or ("akshare" if has_bars else "")),
+    )
+
+
+def _safe_market_call(label: str, func, *args, timeout: float = 6.0, **kwargs):
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(func, *args, **kwargs)
+    try:
+        return future.result(timeout=timeout), ""
+    except FuturesTimeoutError:
+        future.cancel()
+        return None, f"{label}数据源响应超时，请稍后重试。"
+    except Exception:
+        return None, f"{label}数据源暂不可用，请稍后重试。"
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _watchlist_detail_response(watchlist, collection, *, mode: str = "history") -> WatchlistDetailResponse:
@@ -332,23 +527,411 @@ def _event_impact_review_response(stock_code: str, collection, runs) -> EventImp
     )
 
 
+def _setup_action() -> WorkbenchActionDTO:
+    return WorkbenchActionDTO(
+        label="创建组合",
+        href="/watchlist",
+        method="GET",
+        action_type="create_watchlist",
+        variant="primary",
+    )
+
+
+def _dashboard_setup() -> DashboardSetupDTO:
+    return DashboardSetupDTO(
+        title="创建第一个组合",
+        description="先添加你要追踪的股票池。新账号不会加载演示数据或默认股票，只有你创建并刷新过的组合才会沉淀事件、预警和研报任务。",
+        suggested_stock_codes=[],
+        primary_action=_setup_action(),
+    )
+
+
+def _watchlist_list_response(items) -> WatchlistListResponse:
+    return WatchlistListResponse(items=[WatchlistDTO(**item.__dict__) for item in items], total=len(items))
+
+
+def _dashboard_summary(watchlists, collection, alert_response: TrackingAlertListResponse) -> DashboardPortfolioSummaryDTO:
+    stock_codes = sorted({code for watchlist in watchlists for code in watchlist.stock_codes})
+    risk = _watchlist_risk(collection.items, alert_response.items, alert_response)
+    return DashboardPortfolioSummaryDTO(
+        watchlist_count=len(watchlists),
+        stock_count=len(stock_codes),
+        event_count=collection.total,
+        alert_count=alert_response.total,
+        high_impact_count=collection.high_impact_count,
+        manual_review_count=alert_response.manual_review_count,
+        risk_score=int(risk["risk_score"]),
+        risk_level=str(risk["risk_level"]),
+        risk_summary=str(risk["risk_summary"]),
+        processing_rate=float(risk["processing_rate"]),
+        primary_watchlist_id=watchlists[0].watchlist_id if watchlists else "",
+    )
+
+
+def _dashboard_actions(primary_watchlist_id: str = "") -> list[WorkbenchActionDTO]:
+    actions = [
+        WorkbenchActionDTO(label="新建组合", href="/watchlist", action_type="create_watchlist", variant="primary"),
+        WorkbenchActionDTO(label="事件预警", href="/events?view=alerts", action_type="open_events"),
+        WorkbenchActionDTO(label="任务交付", href="/runs", action_type="open_runs"),
+    ]
+    if primary_watchlist_id:
+        actions.insert(
+            1,
+            WorkbenchActionDTO(
+                label="刷新主组合",
+                href=f"/api/v1/watchlists/{primary_watchlist_id}/refresh",
+                method="POST",
+                action_type="refresh_watchlist",
+                target_id=primary_watchlist_id,
+                variant="secondary",
+            ),
+        )
+    return actions
+
+
+def _run_list_from_items(source: AnalysisRunListResponse, items: list[AnalysisRunResponse]) -> AnalysisRunListResponse:
+    return AnalysisRunListResponse(
+        items=items,
+        total=len(items),
+        queued_count=sum(1 for item in items if item.status == "queued"),
+        running_count=sum(1 for item in items if item.status == "running"),
+        completed_count=sum(1 for item in items if item.status == "completed"),
+        failed_count=sum(1 for item in items if item.status == "failed"),
+        stock_groups=source.stock_groups,
+        workspace=source.workspace,
+    )
+
+
+def _stock_timeline_response(stock_code: str, collection) -> StockEventTimelineResponse:
+    stock_name = next((event.stock_name for event in collection.items if event.stock_name), "")
+    return StockEventTimelineResponse(
+        stock_code=stock_code,
+        stock_name=stock_name,
+        items=[MarketEventDTO(**event.__dict__) for event in collection.items],
+        total=collection.total,
+        high_impact_count=collection.high_impact_count,
+        placeholder_count=collection.placeholder_count,
+        duplicate_count=collection.duplicate_count,
+        source_count=collection.source_count,
+        mode="history",
+    )
+
+
+def _combined_exports(latest: LatestReportResponse | None, runs: list[AnalysisRunResponse]):
+    exports = []
+    seen: set[str] = set()
+    for export in list(latest.exports if latest else []):
+        filename = export.filename
+        if filename and filename not in seen:
+            seen.add(filename)
+            exports.append(export)
+    for run in runs:
+        for export in run.exports:
+            filename = export.filename
+            if filename and filename not in seen:
+                seen.add(filename)
+                exports.append(export)
+    return exports
+
+
 @app.get("/api/v1/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return build_health_response()
 
 
-@app.get("/api/v1/reports/latest/{stock_code}", response_model=LatestReportResponse)
-def latest_report(stock_code: str) -> LatestReportResponse:
+def _client_key(request: Request, payload_key: str = "") -> str:
+    host = request.client.host if request.client else "unknown"
+    return f"{host}:{payload_key}"
+
+
+def _set_auth_cookie(response: Response, user: User) -> None:
+    token = create_access_token(user_id=user.id, email=user.email)
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        token,
+        max_age=AUTH_TOKEN_TTL_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        path="/",
+    )
+
+
+@app.post("/api/v1/auth/register", response_model=AuthResponse, status_code=201)
+def auth_register(
+    payload: AuthRegisterRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> AuthResponse:
     try:
-        return get_latest_report(stock_code)
+        check_rate_limit(db, key=_client_key(request, payload.email), scope="signup", limit=SIGNUP_RATE_LIMIT_PER_HOUR)
+        user = register_user(db, email=payload.email, username=payload.username, password=payload.password)
+    except RateLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _set_auth_cookie(response, user)
+    return AuthResponse(user=AuthUserDTO(**user_to_dto(user)))
+
+
+@app.post("/api/v1/auth/login", response_model=AuthResponse)
+def auth_login(
+    payload: AuthLoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> AuthResponse:
+    try:
+        check_rate_limit(db, key=_client_key(request, payload.email_or_username), scope="login", limit=LOGIN_RATE_LIMIT_PER_HOUR)
+        user = authenticate_user(db, email_or_username=payload.email_or_username, password=payload.password)
+    except RateLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    _set_auth_cookie(response, user)
+    return AuthResponse(user=AuthUserDTO(**user_to_dto(user)))
+
+
+@app.post("/api/v1/auth/logout", response_model=HealthResponse)
+def auth_logout(response: Response) -> HealthResponse:
+    response.delete_cookie(AUTH_COOKIE_NAME, path="/")
+    return HealthResponse(status="ok")
+
+
+@app.get("/api/v1/me", response_model=AuthUserDTO)
+def current_user(user: User = Depends(require_current_user)) -> AuthUserDTO:
+    return AuthUserDTO(**user_to_dto(user))
+
+
+@app.get("/api/v1/ui/dashboard", response_model=DashboardResponse)
+def ui_dashboard(user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> DashboardResponse:
+    watchlist_items = list_user_watchlists(db, user_id=user.id)
+    watchlist_response = _watchlist_list_response(watchlist_items)
+    recent_runs = run_manager.list_runs(limit=8, user_id=user.id)
+    if not watchlist_items:
+        return DashboardResponse(
+            mode="setup",
+            setup=_dashboard_setup(),
+            watchlists=watchlist_response,
+            recent_runs=recent_runs,
+            actions=[_setup_action()],
+        )
+
+    stock_codes = _user_tracking_codes(db, user_id=user.id)
+    collection = list_user_events(db, user_id=user.id, stock_codes=stock_codes or None, limit=120)
+    alerts = _filter_alerts_by_status(build_tracking_alerts(collection), "open")
+    alert_response = _tracking_alert_list_response(alerts)
+    briefing = build_daily_briefing(collection)
+    summary = _dashboard_summary(watchlist_items, collection, alert_response)
+    return DashboardResponse(
+        mode="active",
+        setup=_dashboard_setup(),
+        watchlists=watchlist_response,
+        portfolio_summary=summary,
+        risk_queue=alert_response,
+        today_briefing=_daily_briefing_response(briefing),
+        latest_events=_market_event_list_response(collection, mode="history"),
+        recent_runs=recent_runs,
+        actions=_dashboard_actions(summary.primary_watchlist_id),
+    )
+
+
+@app.get("/api/v1/ui/watchlists/{watchlist_id}", response_model=WatchlistDetailResponse)
+def ui_watchlist_detail(watchlist_id: str, user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> WatchlistDetailResponse:
+    item = get_user_watchlist(db, user_id=user.id, watchlist_id=watchlist_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"未找到组合: {watchlist_id}")
+    collection = list_user_events(db, user_id=user.id, stock_codes=item.stock_codes, limit=120)
+    return _watchlist_detail_response(item, collection, mode="history")
+
+
+@app.get("/api/v1/ui/events", response_model=EventWorkbenchResponse)
+def ui_event_workbench(
+    view: str = "events",
+    stock_codes: str = "",
+    status: str = "",
+    event_type: str = "",
+    impact_level: str = "",
+    severity: str = "",
+    alert_type: str = "",
+    rule_id: str = "",
+    selected_event_id: str = "",
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> EventWorkbenchResponse:
+    codes = _user_tracking_codes(db, user_id=user.id, stock_codes=stock_codes)
+    collection = list_user_events(
+        db,
+        user_id=user.id,
+        stock_codes=codes or None,
+        status=status,
+        event_type=event_type,
+        impact_level=impact_level,
+        limit=160,
+    )
+    alerts = _filter_alerts(
+        build_tracking_alerts(collection, limit=80),
+        status=status or "open",
+        severity=severity,
+        alert_type=alert_type,
+        rule_id=rule_id,
+    )
+    selected_event = get_user_event(db, user_id=user.id, event_id=selected_event_id) if selected_event_id else None
+    return EventWorkbenchResponse(
+        view="alerts" if view == "alerts" else "events",
+        events=_market_event_list_response(collection, mode="history"),
+        alerts=_tracking_alert_list_response(alerts),
+        filters={
+            "stock_codes": ",".join(codes),
+            "status": status,
+            "event_type": event_type,
+            "impact_level": impact_level,
+            "severity": severity,
+            "alert_type": alert_type,
+            "rule_id": rule_id,
+        },
+        selected_event=MarketEventDTO(**selected_event.__dict__) if selected_event else None,
+        actions=[
+            WorkbenchActionDTO(label="查看事件", href="/events?view=events", action_type="switch_view"),
+            WorkbenchActionDTO(label="处理预警", href="/events?view=alerts", action_type="switch_view", variant="primary"),
+        ],
+    )
+
+
+@app.get("/api/v1/ui/stocks/{stock_code}", response_model=StockWorkbenchResponse)
+def ui_stock_workbench(
+    stock_code: str,
+    tab: str = "summary",
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> StockWorkbenchResponse:
+    watchlists = list_user_watchlists(db, user_id=user.id)
+    related_watchlists = [item for item in watchlists if stock_code in item.stock_codes]
+    collection = list_user_events(db, user_id=user.id, stock_codes=[stock_code], limit=120)
+    runs = run_manager.list_runs(limit=50, user_id=user.id)
+    stock_runs = [item for item in runs.items if item.stock_code == stock_code]
+    latest_report = None
+    history = None
+    try:
+        latest_report = get_latest_report(stock_code, store=_user_memory(db, user), output_dir=_user_output_dir(user))
+    except NotFoundError:
+        latest_report = None
+    try:
+        history = get_stock_history(stock_code, store=_user_memory(db, user))
+    except NotFoundError:
+        history = None
+    stock_name = (
+        (latest_report.stock.name if latest_report else "")
+        or next((event.stock_name for event in collection.items if event.stock_name), "")
+        or stock_code
+    )
+    event_runs = run_manager.list_event_runs(stock_code=stock_code, limit=40, user_id=user.id)
+    return StockWorkbenchResponse(
+        stock_code=stock_code,
+        stock_name=stock_name,
+        active_tab=tab if tab in {"summary", "timeline", "history", "exports"} else "summary",
+        is_tracked=bool(related_watchlists),
+        latest_report=latest_report,
+        history=history,
+        timeline=_stock_timeline_response(stock_code, collection),
+        impact_review=_event_impact_review_response(stock_code, collection, event_runs),
+        related_watchlists=[WatchlistDTO(**item.__dict__) for item in related_watchlists],
+        related_runs=_run_list_from_items(runs, stock_runs),
+        exports=_combined_exports(latest_report, stock_runs),
+        actions=[
+            WorkbenchActionDTO(label="生成研报", href="/api/v1/runs", method="POST", action_type="create_run", target_id=stock_code, variant="primary"),
+            WorkbenchActionDTO(label="查看事件", href=f"/events?stock_codes={stock_code}", action_type="open_events"),
+            WorkbenchActionDTO(label="管理组合", href="/watchlist", action_type="open_watchlists"),
+        ],
+    )
+
+
+@app.get("/api/v1/ui/markets/{stock_code}", response_model=MarketWorkbenchResponse)
+def ui_market_workbench(
+    stock_code: str,
+    range: str = "90d",
+    user: User = Depends(require_current_user),
+) -> MarketWorkbenchResponse:
+    stock_code = str(stock_code or "").strip()
+    if not _is_valid_a_stock_code(stock_code):
+        raise HTTPException(status_code=422, detail="请输入 6 位 A 股股票代码")
+
+    normalized_range, days = _market_range_to_days(range)
+    quote: dict = {}
+    bars: list[dict] = []
+    fallback_messages: list[str] = []
+    quote_result, quote_error = _safe_market_call("行情快照", fetch_live_quotes, stock_code, timeout=4)
+    if quote_error:
+        fallback_messages.append(quote_error)
+    elif isinstance(quote_result, dict):
+        quote = quote_result
+
+    bars_result, bars_error = _safe_market_call("日线", get_stock_daily_bars, stock_code, days=days, timeout=6)
+    if bars_error:
+        fallback_messages.append(bars_error)
+    elif isinstance(bars_result, list):
+        bars = bars_result
+
+    if bars:
+        bars = bars[-days:]
+    fallback_message = " ".join(dict.fromkeys(fallback_messages))
+    if not quote and not bars and not fallback_message:
+        fallback_message = "当前没有可用行情数据，请稍后重试。"
+    quote_response = _market_quote_response(stock_code, quote, bars, fallback_message)
+    stock_name = quote_response.stock_name or stock_code
+    return MarketWorkbenchResponse(
+        stock_code=stock_code,
+        stock_name=stock_name,
+        range=normalized_range,
+        quote=quote_response,
+        daily_bars=[MarketDailyBarDTO(**item) for item in bars],
+        fallback_message=fallback_message,
+        actions=[
+            WorkbenchActionDTO(label="返回情报中心", href=f"/stocks/{stock_code}", action_type="open_stock"),
+            WorkbenchActionDTO(label="查看事件台", href=f"/events?stock_codes={stock_code}", action_type="open_events"),
+            WorkbenchActionDTO(label="生成研报", href="/api/v1/runs", method="POST", action_type="create_run", target_id=stock_code, variant="primary"),
+        ],
+    )
+
+
+@app.get("/api/v1/ui/runs", response_model=RunWorkbenchResponse)
+def ui_run_workbench(
+    limit: int = 24,
+    selected_run_id: str = "",
+    user: User = Depends(require_current_user),
+) -> RunWorkbenchResponse:
+    runs = run_manager.list_runs(limit=max(1, min(limit, 100)), user_id=user.id)
+    selected = None
+    if selected_run_id:
+        try:
+            run = run_manager.get_run(selected_run_id)
+            if getattr(run, "user_id", "") == user.id:
+                selected = run_manager.get_run_response(selected_run_id)
+        except RunNotFoundError:
+            selected = None
+    return RunWorkbenchResponse(
+        runs=runs,
+        selected_run=selected,
+        actions=[
+            WorkbenchActionDTO(label="新建研报任务", href="/runs", action_type="create_run", variant="primary"),
+            WorkbenchActionDTO(label="批量任务", href="/runs", action_type="create_batch_run"),
+        ],
+    )
+
+
+@app.get("/api/v1/reports/latest/{stock_code}", response_model=LatestReportResponse)
+def latest_report(stock_code: str, user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> LatestReportResponse:
+    try:
+        return get_latest_report(stock_code, store=_user_memory(db, user), output_dir=_user_output_dir(user))
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/history/{stock_code}", response_model=StockHistoryResponse)
-def stock_history(stock_code: str) -> StockHistoryResponse:
+def stock_history(stock_code: str, user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> StockHistoryResponse:
     try:
-        return get_stock_history(stock_code)
+        return get_stock_history(stock_code, store=_user_memory(db, user))
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -370,12 +953,16 @@ def market_events(
     status: str = "",
     start: str = "",
     end: str = "",
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
 ) -> MarketEventListResponse:
-    codes = [part.strip() for part in stock_codes.split(",") if part.strip()] if stock_codes else None
+    codes = _user_tracking_codes(db, user_id=user.id, stock_codes=stock_codes)
     normalized_mode = "history" if mode == "history" else "realtime"
     if normalized_mode == "history":
-        collection = collect_historical_events(
-            stock_codes=codes,
+        collection = list_user_events(
+            db,
+            user_id=user.id,
+            stock_codes=codes or None,
             provider=provider,
             event_type=event_type,
             impact_level=impact_level,
@@ -384,17 +971,21 @@ def market_events(
             end=end,
             limit=max(1, min(limit_per_stock * max(1, len(codes or []), 4), 120)),
         )
+    elif not codes:
+        collection = list_user_events(db, user_id=user.id, limit=max(1, min(limit_per_stock * 4, 120)))
+        normalized_mode = "history"
     else:
         collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
+        save_user_events(db, user_id=user.id, events=collection.items)
         if status and status != "all":
             collection = summarize_events([event for event in collection.items if event.status == status])
     return _market_event_list_response(collection, mode=normalized_mode)
 
 
 @app.get("/api/v1/events/{event_id}", response_model=MarketEventDTO)
-def event_detail(event_id: str, stock_codes: str = "") -> MarketEventDTO:
-    codes = [part.strip() for part in stock_codes.split(",") if part.strip()] if stock_codes else None
-    event = find_market_event(event_id, stock_codes=codes)
+def event_detail(event_id: str, stock_codes: str = "", user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> MarketEventDTO:
+    del stock_codes
+    event = get_user_event(db, user_id=user.id, event_id=event_id)
     if event is None:
         raise HTTPException(status_code=404, detail=f"未找到事件: {event_id}")
     return MarketEventDTO(**event.__dict__)
@@ -406,14 +997,15 @@ def update_market_event_status(
     payload: EventStatusUpdateRequest,
     actor_header: str = Header(default='browser-user', alias='X-Actor'),
     role_header: str = Header(default='admin', alias='X-Role'),
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
 ) -> MarketEventDTO:
-    event = find_market_event(event_id)
+    event = get_user_event(db, user_id=user.id, event_id=event_id)
     if event is None:
         raise HTTPException(status_code=404, detail=f"未找到事件: {event_id}")
-    save_events([event])
     actor, _ = _actor(actor_header, role_header)
     try:
-        updated = update_event_status(event_id, payload.status, note=payload.note, actor=actor)
+        updated = update_user_event_status(db, user_id=user.id, event_id=event_id, status=payload.status, note=payload.note, actor=user.username or actor)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if updated is None:
@@ -427,11 +1019,13 @@ def analyze_event(
     payload: EventAnalyzeRequest | None = None,
     actor_header: str = Header(default='system', alias='X-Actor'),
     role_header: str = Header(default='admin', alias='X-Role'),
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
 ) -> AnalysisRunResponse:
-    event = find_market_event(event_id)
+    event = get_user_event(db, user_id=user.id, event_id=event_id)
     if event is None:
         raise HTTPException(status_code=404, detail=f"未找到事件: {event_id}")
-    actor, role = _actor(actor_header, role_header)
+    actor, role = _run_actor_for_request(user, actor_header, role_header)
     context = {
         "event_id": event.event_id,
         "stock_code": event.stock_code,
@@ -457,15 +1051,21 @@ def analyze_event(
         "status_note": event.status_note,
         "note": payload.note if payload else "",
     }
-    run = run_manager.start_event_run(event.stock_code, event_context=context, actor=actor, role=role)
-    save_events([event])
-    update_event_status(event.event_id, "converted_to_report", note=payload.note if payload else "已触发事件研报任务", actor=actor)
+    run = run_manager.start_event_run(event.stock_code, event_context=context, actor=actor, role=role, user_id=user.id)
+    _sync_user_run(db, user, run)
+    save_user_events(db, user_id=user.id, events=[event])
+    update_user_event_status(db, user_id=user.id, event_id=event.event_id, status="converted_to_report", note=payload.note if payload else "已触发事件研报任务", actor=actor)
     return run_manager.get_run_response(run.run_id)
 
 
 @app.get("/api/v1/stocks/{stock_code}/events", response_model=StockEventTimelineResponse)
-def stock_events(stock_code: str, limit: int = 6) -> StockEventTimelineResponse:
-    collection = collect_stock_events(stock_code, limit=max(1, min(limit, 12)), include_history=True)
+def stock_events(stock_code: str, limit: int = 6, user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> StockEventTimelineResponse:
+    realtime = collect_stock_events(stock_code, limit=max(1, min(limit, 12)), include_history=False)
+    if _user_is_tracking_stock(db, user_id=user.id, stock_code=stock_code):
+        save_user_events(db, user_id=user.id, events=realtime.items)
+        collection = list_user_events(db, user_id=user.id, stock_codes=[stock_code], limit=max(1, min(limit, 80)))
+    else:
+        collection = realtime
     stock_name = collection.items[0].stock_name if collection.items else ""
     return StockEventTimelineResponse(
         stock_code=stock_code,
@@ -481,9 +1081,11 @@ def stock_events(stock_code: str, limit: int = 6) -> StockEventTimelineResponse:
 
 
 @app.get("/api/v1/stocks/{stock_code}/event-impact-review", response_model=EventImpactReviewResponse)
-def stock_event_impact_review(stock_code: str, limit: int = 20) -> EventImpactReviewResponse:
-    collection = collect_historical_events(stock_codes=[stock_code], limit=max(1, min(limit, 80)))
-    runs = run_manager.list_event_runs(stock_code=stock_code, limit=40)
+def stock_event_impact_review(stock_code: str, limit: int = 20, user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> EventImpactReviewResponse:
+    collection = list_user_events(db, user_id=user.id, stock_codes=[stock_code], limit=max(1, min(limit, 80)))
+    runs = run_manager.list_event_runs(stock_code=stock_code, limit=40, user_id=user.id)
+    for run in runs:
+        _sync_user_run(db, user, run)
     return _event_impact_review_response(stock_code, collection, runs)
 
 
@@ -502,16 +1104,23 @@ def tracking_alerts(
     severity: str = "",
     alert_type: str = "",
     rule_id: str = "",
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
 ) -> TrackingAlertListResponse:
-    codes = [part.strip() for part in stock_codes.split(",") if part.strip()] if stock_codes else None
+    codes = _user_tracking_codes(db, user_id=user.id, stock_codes=stock_codes)
     normalized_mode = "history" if mode == "history" else "realtime"
     if normalized_mode == "history":
-        collection = collect_historical_events(
-            stock_codes=codes,
+        collection = list_user_events(
+            db,
+            user_id=user.id,
+            stock_codes=codes or None,
             limit=max(1, min(limit_per_stock * max(1, len(codes or []), 4), 120)),
         )
+    elif not codes:
+        collection = list_user_events(db, user_id=user.id, limit=max(1, min(limit_per_stock * 4, 120)))
     else:
         collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
+        save_user_events(db, user_id=user.id, events=collection.items)
     alerts = _filter_alerts(
         build_tracking_alerts(collection),
         status=status,
@@ -523,9 +1132,13 @@ def tracking_alerts(
 
 
 @app.get("/api/v1/briefing/daily", response_model=DailyBriefingResponse)
-def daily_briefing(stock_codes: str = "", limit_per_stock: int = 4) -> DailyBriefingResponse:
-    codes = [part.strip() for part in stock_codes.split(",") if part.strip()] if stock_codes else None
-    collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
+def daily_briefing(stock_codes: str = "", limit_per_stock: int = 4, user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> DailyBriefingResponse:
+    codes = _user_tracking_codes(db, user_id=user.id, stock_codes=stock_codes)
+    if codes:
+        collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
+        save_user_events(db, user_id=user.id, events=collection.items)
+    else:
+        collection = list_user_events(db, user_id=user.id, limit=max(1, min(limit_per_stock * 4, 120)))
     briefing = build_daily_briefing(collection)
     return DailyBriefingResponse(
         title=briefing.title,
@@ -544,83 +1157,106 @@ def daily_briefing(stock_codes: str = "", limit_per_stock: int = 4) -> DailyBrie
 
 
 @app.get("/api/v1/watchlists", response_model=WatchlistListResponse)
-def watchlists() -> WatchlistListResponse:
-    items = list_watchlists()
+def watchlists(user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> WatchlistListResponse:
+    items = list_user_watchlists(db, user_id=user.id)
     return WatchlistListResponse(items=[WatchlistDTO(**item.__dict__) for item in items], total=len(items))
 
 
 @app.post("/api/v1/watchlists", response_model=WatchlistDTO, status_code=201)
-def create_tracking_watchlist(payload: WatchlistCreateRequest) -> WatchlistDTO:
-    item = create_watchlist(payload.name, payload.stock_codes, description=payload.description)
+def create_tracking_watchlist(payload: WatchlistCreateRequest, user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> WatchlistDTO:
+    item = create_user_watchlist(db, user_id=user.id, name=payload.name, stock_codes=payload.stock_codes, description=payload.description)
     return WatchlistDTO(**item.__dict__)
 
 
 @app.get("/api/v1/watchlists/{watchlist_id}", response_model=WatchlistDetailResponse)
-def watchlist_detail(watchlist_id: str) -> WatchlistDetailResponse:
-    item = get_watchlist(watchlist_id)
+def watchlist_detail(watchlist_id: str, user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> WatchlistDetailResponse:
+    item = get_user_watchlist(db, user_id=user.id, watchlist_id=watchlist_id)
     if item is None:
         raise HTTPException(status_code=404, detail=f"未找到组合: {watchlist_id}")
-    collection = collect_historical_events(stock_codes=item.stock_codes, limit=80)
+    collection = list_user_events(db, user_id=user.id, stock_codes=item.stock_codes, limit=80)
     return _watchlist_detail_response(item, collection, mode="history")
 
 
 @app.post("/api/v1/watchlists/{watchlist_id}/refresh", response_model=WatchlistDetailResponse, status_code=202)
-def refresh_watchlist_events(watchlist_id: str, limit_per_stock: int = 4) -> WatchlistDetailResponse:
-    item = get_watchlist(watchlist_id)
+def refresh_watchlist_events(watchlist_id: str, limit_per_stock: int = 4, user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> WatchlistDetailResponse:
+    item = get_user_watchlist(db, user_id=user.id, watchlist_id=watchlist_id)
     if item is None:
         raise HTTPException(status_code=404, detail=f"未找到组合: {watchlist_id}")
     collection = collect_market_events(
         stock_codes=item.stock_codes,
         limit_per_stock=max(1, min(limit_per_stock, 8)),
     )
-    updated = mark_watchlist_refreshed(watchlist_id) or item
+    save_user_events(db, user_id=user.id, events=collection.items)
+    updated = mark_user_watchlist_refreshed(db, user_id=user.id, watchlist_id=watchlist_id) or item
     return _watchlist_detail_response(updated, collection, mode="realtime")
 
 
 @app.get("/api/v1/workspace/stocks", response_model=WorkspaceStocksResponse)
-def workspace_stocks() -> WorkspaceStocksResponse:
-    store = get_memory_store()
-    return WorkspaceStocksResponse(items=store.get_all_stocks())
+def workspace_stocks(user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> WorkspaceStocksResponse:
+    return WorkspaceStocksResponse(items=_user_memory(db, user).get_all_stocks())
 
 
 @app.get("/api/v1/store/health", response_model=StoreHealthResponse)
-def store_health() -> StoreHealthResponse:
+def store_health(user: User = Depends(require_current_user)) -> StoreHealthResponse:
+    _require_admin(user)
     return StoreHealthResponse(**run_manager.store_health())
 
 
 @app.get("/api/v1/ops/metrics", response_model=OpsMetricsResponse)
-def ops_metrics() -> OpsMetricsResponse:
+def ops_metrics(user: User = Depends(require_current_user)) -> OpsMetricsResponse:
+    _require_admin(user)
     return OpsMetricsResponse(**run_manager.ops_metrics())
 
 
 @app.post("/api/v1/store/backup", response_model=StoreBackupResponse)
-def backup_store(actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> StoreBackupResponse:
-    _actor(actor_header, role_header)
+def backup_store(user: User = Depends(require_current_user)) -> StoreBackupResponse:
+    _require_admin(user)
     return StoreBackupResponse(backup_path=run_manager.backup_store())
 
 
 @app.get("/api/v1/runs", response_model=AnalysisRunListResponse)
-def list_runs(limit: int = 10) -> AnalysisRunListResponse:
-    return run_manager.list_runs(limit=limit)
+def list_runs(
+    limit: int = 10,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> AnalysisRunListResponse:
+    for run in run_manager.list_run_objects(limit=max(1, min(limit, 200)), user_id=user.id):
+        _sync_user_run(db, user, run)
+    return run_manager.list_runs(limit=limit, user_id=user.id)
 
 
 @app.post("/api/v1/runs", response_model=AnalysisRunResponse, status_code=202)
-def create_run(payload: AnalysisRunCreateRequest, actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> AnalysisRunResponse:
-    actor, role = _actor(actor_header, role_header)
-    run = run_manager.start_run(payload.stock_code, actor=actor, role=role)
+def create_run(
+    payload: AnalysisRunCreateRequest,
+    actor_header: str = Header(default='system', alias='X-Actor'),
+    role_header: str = Header(default='admin', alias='X-Role'),
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> AnalysisRunResponse:
+    actor, role = _run_actor_for_request(user, actor_header, role_header)
+    run = run_manager.start_run(payload.stock_code, actor=actor, role=role, user_id=user.id)
+    _sync_user_run(db, user, run)
     return run_manager.get_run_response(run.run_id)
 
 
 @app.post("/api/v1/runs/batch", response_model=BatchRunCreateResponse, status_code=202)
-def create_batch_runs(payload: BatchRunCreateRequest, actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> BatchRunCreateResponse:
-    actor, role = _actor(actor_header, role_header)
-    runs = run_manager.start_batch(payload.stock_codes, actor=actor, role=role)
+def create_batch_runs(
+    payload: BatchRunCreateRequest,
+    actor_header: str = Header(default='system', alias='X-Actor'),
+    role_header: str = Header(default='admin', alias='X-Role'),
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> BatchRunCreateResponse:
+    actor, role = _run_actor_for_request(user, actor_header, role_header)
+    runs = run_manager.start_batch(payload.stock_codes, actor=actor, role=role, user_id=user.id)
+    for run in runs:
+        _sync_user_run(db, user, run)
     return BatchRunCreateResponse(items=[run_manager.get_run_response(item.run_id) for item in runs], total=len(runs))
 
 
 @app.get("/api/v1/reports/diff/{stock_code}", response_model=ReportDiffResponse)
-def report_diff(stock_code: str) -> ReportDiffResponse:
-    store = get_memory_store()
+def report_diff(stock_code: str, user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> ReportDiffResponse:
+    store = _user_memory(db, user)
     records = store.get_history(stock_code=stock_code, limit=2)
     if len(records) < 2:
         return ReportDiffResponse(stock_code=stock_code, summary='至少需要两份历史报告才能生成版本 diff')
@@ -643,18 +1279,33 @@ def report_diff(stock_code: str) -> ReportDiffResponse:
 
 
 @app.get("/api/v1/runs/{run_id}", response_model=AnalysisRunResponse)
-def get_run(run_id: str) -> AnalysisRunResponse:
+def get_run(
+    run_id: str,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> AnalysisRunResponse:
     try:
+        run = run_manager.get_run(run_id)
+        _assert_run_access(run, user)
+        _sync_user_run(db, user, run)
         return run_manager.get_run_response(run_id)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/runs/{run_id}/retry", response_model=AnalysisRunResponse, status_code=202)
-def retry_run(run_id: str, actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> AnalysisRunResponse:
-    actor, role = _actor(actor_header, role_header)
+def retry_run(
+    run_id: str,
+    actor_header: str = Header(default='system', alias='X-Actor'),
+    role_header: str = Header(default='admin', alias='X-Role'),
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> AnalysisRunResponse:
+    actor, role = _run_actor_for_request(user, actor_header, role_header)
     try:
+        _assert_run_access(run_manager.get_run(run_id), user)
         run = run_manager.retry_run(run_id, actor=actor, role=role)
+        _sync_user_run(db, user, run)
         return run_manager.get_run_response(run.run_id)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -663,10 +1314,18 @@ def retry_run(run_id: str, actor_header: str = Header(default='system', alias='X
 
 
 @app.post("/api/v1/runs/{run_id}/cancel", response_model=AnalysisRunResponse)
-def cancel_run(run_id: str, actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> AnalysisRunResponse:
-    actor, role = _actor(actor_header, role_header)
+def cancel_run(
+    run_id: str,
+    actor_header: str = Header(default='system', alias='X-Actor'),
+    role_header: str = Header(default='admin', alias='X-Role'),
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> AnalysisRunResponse:
+    actor, role = _run_actor_for_request(user, actor_header, role_header)
     try:
+        _assert_run_access(run_manager.get_run(run_id), user)
         run_manager.cancel_run(run_id, actor=actor, role=role)
+        _sync_user_run(db, user, run_manager.get_run(run_id))
         return run_manager.get_run_response(run_id)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -675,10 +1334,21 @@ def cancel_run(run_id: str, actor_header: str = Header(default='system', alias='
 
 
 @app.post("/api/v1/runs/{run_id}/assign", response_model=AnalysisRunResponse)
-def assign_run(run_id: str, payload: RunAssignmentRequest, actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> AnalysisRunResponse:
-    actor, role = _actor(actor_header, role_header)
+def assign_run(
+    run_id: str,
+    payload: RunAssignmentRequest,
+    actor_header: str = Header(default='system', alias='X-Actor'),
+    role_header: str = Header(default='admin', alias='X-Role'),
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> AnalysisRunResponse:
+    actor, role = _run_actor_for_request(user, actor_header, role_header)
+    if user.role != "admin" and payload.owner != user.username:
+        raise HTTPException(status_code=403, detail="普通用户只能把任务分配给自己")
     try:
+        _assert_run_access(run_manager.get_run(run_id), user)
         run_manager.assign_owner(run_id, payload.owner, actor=actor, role=role)
+        _sync_user_run(db, user, run_manager.get_run(run_id))
         return run_manager.get_run_response(run_id)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -687,10 +1357,18 @@ def assign_run(run_id: str, payload: RunAssignmentRequest, actor_header: str = H
 
 
 @app.post("/api/v1/runs/{run_id}/archive", response_model=AnalysisRunResponse)
-def archive_run(run_id: str, actor_header: str = Header(default='system', alias='X-Actor'), role_header: str = Header(default='admin', alias='X-Role')) -> AnalysisRunResponse:
-    actor, role = _actor(actor_header, role_header)
+def archive_run(
+    run_id: str,
+    actor_header: str = Header(default='system', alias='X-Actor'),
+    role_header: str = Header(default='admin', alias='X-Role'),
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> AnalysisRunResponse:
+    actor, role = _run_actor_for_request(user, actor_header, role_header)
     try:
+        _assert_run_access(run_manager.get_run(run_id), user)
         run_manager.archive_run(run_id, actor=actor, role=role)
+        _sync_user_run(db, user, run_manager.get_run(run_id))
         return run_manager.get_run_response(run_id)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -699,9 +1377,22 @@ def archive_run(run_id: str, actor_header: str = Header(default='system', alias=
 
 
 @app.get("/api/v1/exports/{filename}")
-def download_export(filename: str) -> FileResponse:
+def download_export(
+    filename: str,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    artifact = get_user_export_artifact(db, user_id=user.id, filename=filename)
+    if artifact is None:
+        run = run_manager.find_run_by_export(filename, user_id=user.id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"未找到导出物: {filename}")
+        _sync_user_run(db, user, run)
+        artifact = get_user_export_artifact(db, user_id=user.id, filename=filename)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail=f"未找到导出物: {filename}")
     try:
-        path = resolve_export_file(filename)
+        path = _resolve_user_export_path(filename, artifact.path)
     except ExportNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     media_type = {
@@ -712,3 +1403,17 @@ def download_export(filename: str) -> FileResponse:
         ".json": "application/json",
     }.get(path.suffix.lower(), "application/octet-stream")
     return FileResponse(path, media_type=media_type, filename=path.name)
+
+
+def _resolve_user_export_path(filename: str, stored_path: str) -> Path:
+    candidate = Path(filename)
+    if candidate.name != filename:
+        raise ExportNotFoundError("非法导出文件名")
+    path = Path(stored_path or "")
+    if not path.name or path.name != filename:
+        raise ExportNotFoundError(f"未找到导出物: {filename}")
+    if path.suffix.lower() not in {".md", ".html", ".pdf", ".log", ".json"}:
+        raise ExportNotFoundError("不支持的导出文件类型")
+    if not path.exists() or not path.is_file():
+        raise ExportNotFoundError(f"未找到导出物: {filename}")
+    return path

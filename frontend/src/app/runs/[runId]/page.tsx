@@ -2,11 +2,13 @@ import Link from 'next/link'
 
 import { RunActionControls } from '../../../components/run-action-controls'
 import { RunStatusBar } from '../../../components/run-status-bar'
-import { API_BASE, fetchAnalysisRun, stockCodeFromRun } from '../../../lib/api'
+import { fetchAnalysisRun, sameOriginApiUrl, stockCodeFromRun } from '../../../lib/api'
+import { serverApiOptions } from '../../../lib/server-auth'
 
 export default async function RunDetailPage({ params }: { params: Promise<{ runId: string }> }) {
   const { runId } = await params
-  const run = await fetchAnalysisRun(runId)
+  const apiOptions = await serverApiOptions()
+  const run = await fetchAnalysisRun(runId, apiOptions)
   const stockCode = stockCodeFromRun(run)
   const hasData = run.status === 'completed'
   const eventContext = run.event_context
@@ -75,7 +77,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
                   </div>
                   {eventReportSummary.report_delta_hint ? <div className="pathText">{eventReportSummary.report_delta_hint}</div> : null}
                   <div className="actionList">
-                    {eventReportSummary.event_commentary_url ? <a className="downloadLink" href={`${API_BASE}${eventReportSummary.event_commentary_url}`} target="_blank" rel="noreferrer">查看事件点评导出</a> : null}
+                    {eventReportSummary.event_commentary_url ? <a className="downloadLink" href={sameOriginApiUrl(eventReportSummary.event_commentary_url)} target="_blank" rel="noreferrer">查看事件点评导出</a> : null}
                   </div>
                 </div>
               ) : null}
@@ -162,7 +164,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
                 <div className="itemTitle">{item.kind}</div>
                 <div className="itemMeta">{item.filename}</div>
                 <div className="inlineMeta">复用统一导出 contract：{item.download_url}</div>
-                <a className="downloadLink" href={`${API_BASE}${item.download_url}`} target="_blank" rel="noreferrer">下载 / 查看</a>
+                <a className="downloadLink" href={sameOriginApiUrl(item.download_url)} target="_blank" rel="noreferrer">下载 / 查看</a>
               </div>
             )) : <div className="card">当前运行尚未产出导出物。</div>}
           </div>

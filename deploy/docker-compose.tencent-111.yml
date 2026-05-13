@@ -1,0 +1,12 @@
+services:
+  api:
+    ports:
+      - "127.0.0.1:8011:8000"
+
+  frontend:
+    ports:
+      - "127.0.0.1:3011:3000"
+
+  caddy:
+    profiles:
+      - public-edge

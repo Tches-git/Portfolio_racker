@@ -63,6 +63,16 @@ MAX_REPORT_CONCLUSION_CHARS = int(os.getenv("MAX_REPORT_CONCLUSION_CHARS", "2500
 MC_SIMULATIONS = int(os.getenv("MC_SIMULATIONS", "1000"))
 EMBED_DIMENSION = 2048
 
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{OUTPUT_DIR / 'portfolio_tracker.db'}")
+REDIS_URL = os.getenv("REDIS_URL", "")
+AUTH_SECRET = os.getenv("AUTH_SECRET", "dev-only-change-me")
+AUTH_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "portfolio_session")
+AUTH_TOKEN_TTL_SECONDS = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "86400"))
+AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "false").lower() in {"1", "true", "yes", "on"}
+ENABLE_SIGNUP = os.getenv("ENABLE_SIGNUP", "true").lower() in {"1", "true", "yes", "on"}
+SIGNUP_RATE_LIMIT_PER_HOUR = int(os.getenv("SIGNUP_RATE_LIMIT_PER_HOUR", "10"))
+LOGIN_RATE_LIMIT_PER_HOUR = int(os.getenv("LOGIN_RATE_LIMIT_PER_HOUR", "30"))
+
 import logging
 _config_logger = logging.getLogger("fin.config")
 _VALID_LLM_PROVIDERS = {"zhipu", "openai"}

@@ -22,10 +22,11 @@ export function WatchlistCreateForm() {
     setPending(true)
     setError('')
     try {
-      await createWatchlist({ name, stock_codes: stockCodes, description })
+      const created = await createWatchlist({ name, stock_codes: stockCodes, description })
       setName('')
       setCodes('')
       setDescription('')
+      router.push(`/watchlist/${created.watchlist_id}`)
       router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : '创建组合失败')
@@ -39,7 +40,7 @@ export function WatchlistCreateForm() {
       <div className="itemTitle">新建追踪组合</div>
       <div className="metricStack">
         <input className="input" value={name} onChange={(event) => setName(event.target.value)} placeholder="组合名称" />
-        <input className="input" value={codes} onChange={(event) => setCodes(event.target.value)} placeholder="股票代码，用逗号或空格分隔" />
+        <input className="input" value={codes} onChange={(event) => setCodes(event.target.value)} placeholder="输入你要追踪的 6 位股票代码，用逗号或空格分隔" />
         <input className="input" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="组合说明，可选" />
         <button className="button" onClick={submit} disabled={pending}>{pending ? '创建中...' : '创建组合'}</button>
         {error ? <div className="inlineError">{error}</div> : null}

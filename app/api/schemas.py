@@ -8,6 +8,31 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
+class AuthRegisterRequest(BaseModel):
+    email: str = Field(min_length=3)
+    username: str = ""
+    password: str = Field(min_length=8)
+
+
+class AuthLoginRequest(BaseModel):
+    email_or_username: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+
+
+class AuthUserDTO(BaseModel):
+    id: str
+    email: str
+    username: str
+    role: str = "user"
+    is_active: bool = True
+    created_at: str = ""
+    last_login_at: str = ""
+
+
+class AuthResponse(BaseModel):
+    user: AuthUserDTO
+
+
 class StoreHealthResponse(BaseModel):
     backend: str = ""
     integrity: str = ""
@@ -152,6 +177,39 @@ class StockNewsResponse(BaseModel):
     total: int = 0
 
 
+class MarketDailyBarDTO(BaseModel):
+    date: str = ""
+    open: float = 0.0
+    high: float = 0.0
+    low: float = 0.0
+    close: float = 0.0
+    volume: float = 0.0
+    amount: float = 0.0
+    change_pct: float = 0.0
+    turnover: float = 0.0
+
+
+class MarketQuoteDTO(BaseModel):
+    stock_code: str = ""
+    stock_name: str = ""
+    price: float = 0.0
+    change: float = 0.0
+    change_pct: float = 0.0
+    open: float = 0.0
+    high: float = 0.0
+    low: float = 0.0
+    previous_close: float = 0.0
+    volume: float = 0.0
+    amount: float = 0.0
+    turnover: float = 0.0
+    market_cap: float = 0.0
+    pe_ratio: float = 0.0
+    pb_ratio: float = 0.0
+    updated_at: str = ""
+    source_status: str = "degraded"
+    provider: str = ""
+
+
 class MarketEventDTO(BaseModel):
     event_id: str
     stock_code: str
@@ -176,6 +234,7 @@ class MarketEventDTO(BaseModel):
     related_sources: list[dict[str, str]] = Field(default_factory=list)
     is_duplicate: bool = False
     parent_event_id: str = ""
+    duplicate_count: int = 0
     status: str = "new"
     status_updated_at: str = ""
     status_note: str = ""
@@ -331,7 +390,7 @@ class EventImpactReplayItemDTO(BaseModel):
 
 
 class EventImpactReviewResponse(BaseModel):
-    stock_code: str
+    stock_code: str = ""
     stock_name: str = ""
     total_events: int = 0
     high_impact_count: int = 0
@@ -564,3 +623,85 @@ class AnalysisRunListResponse(BaseModel):
     failed_count: int = 0
     stock_groups: list[RunStockGroupDTO] = Field(default_factory=list)
     workspace: WorkspaceSnapshotDTO = Field(default_factory=WorkspaceSnapshotDTO)
+
+
+class WorkbenchActionDTO(BaseModel):
+    label: str = ""
+    href: str = ""
+    method: str = "GET"
+    action_type: str = ""
+    target_id: str = ""
+    variant: str = "secondary"
+
+
+class MarketWorkbenchResponse(BaseModel):
+    stock_code: str
+    stock_name: str = ""
+    range: str = "90d"
+    quote: MarketQuoteDTO = Field(default_factory=MarketQuoteDTO)
+    daily_bars: list[MarketDailyBarDTO] = Field(default_factory=list)
+    fallback_message: str = ""
+    actions: list[WorkbenchActionDTO] = Field(default_factory=list)
+
+
+class DashboardSetupDTO(BaseModel):
+    title: str = "创建第一个组合"
+    description: str = "添加一组股票后，系统会围绕组合生成风险、事件、预警和研报任务入口。"
+    suggested_stock_codes: list[str] = Field(default_factory=list)
+    primary_action: WorkbenchActionDTO = Field(default_factory=WorkbenchActionDTO)
+
+
+class DashboardPortfolioSummaryDTO(BaseModel):
+    watchlist_count: int = 0
+    stock_count: int = 0
+    event_count: int = 0
+    alert_count: int = 0
+    high_impact_count: int = 0
+    manual_review_count: int = 0
+    risk_score: int = 0
+    risk_level: str = "low"
+    risk_summary: str = ""
+    processing_rate: float = 0.0
+    primary_watchlist_id: str = ""
+
+
+class DashboardResponse(BaseModel):
+    mode: str = "setup"
+    setup: DashboardSetupDTO = Field(default_factory=DashboardSetupDTO)
+    watchlists: WatchlistListResponse = Field(default_factory=WatchlistListResponse)
+    portfolio_summary: DashboardPortfolioSummaryDTO = Field(default_factory=DashboardPortfolioSummaryDTO)
+    risk_queue: TrackingAlertListResponse = Field(default_factory=TrackingAlertListResponse)
+    today_briefing: DailyBriefingResponse = Field(default_factory=DailyBriefingResponse)
+    latest_events: MarketEventListResponse = Field(default_factory=MarketEventListResponse)
+    recent_runs: AnalysisRunListResponse = Field(default_factory=AnalysisRunListResponse)
+    actions: list[WorkbenchActionDTO] = Field(default_factory=list)
+
+
+class EventWorkbenchResponse(BaseModel):
+    view: str = "events"
+    events: MarketEventListResponse = Field(default_factory=MarketEventListResponse)
+    alerts: TrackingAlertListResponse = Field(default_factory=TrackingAlertListResponse)
+    filters: dict[str, str] = Field(default_factory=dict)
+    selected_event: MarketEventDTO | None = None
+    actions: list[WorkbenchActionDTO] = Field(default_factory=list)
+
+
+class StockWorkbenchResponse(BaseModel):
+    stock_code: str
+    stock_name: str = ""
+    active_tab: str = "summary"
+    is_tracked: bool = False
+    latest_report: LatestReportResponse | None = None
+    history: StockHistoryResponse | None = None
+    timeline: StockEventTimelineResponse = Field(default_factory=lambda: StockEventTimelineResponse(stock_code=""))
+    impact_review: EventImpactReviewResponse = Field(default_factory=EventImpactReviewResponse)
+    related_watchlists: list[WatchlistDTO] = Field(default_factory=list)
+    related_runs: AnalysisRunListResponse = Field(default_factory=AnalysisRunListResponse)
+    exports: list[ExportArtifactDTO] = Field(default_factory=list)
+    actions: list[WorkbenchActionDTO] = Field(default_factory=list)
+
+
+class RunWorkbenchResponse(BaseModel):
+    runs: AnalysisRunListResponse = Field(default_factory=AnalysisRunListResponse)
+    selected_run: AnalysisRunResponse | None = None
+    actions: list[WorkbenchActionDTO] = Field(default_factory=list)

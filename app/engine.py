@@ -1,6 +1,7 @@
 """金融研报生成引擎 — Agent + RAG 架构"""
 from __future__ import annotations
 
+import inspect
 import time
 from typing import Callable
 
@@ -15,9 +16,10 @@ StepCallback = Callable[[str, str, AnalysisState], None]
 class ReportEngine:
     """研报引擎 — 基于多Agent编排 + RAG增强"""
 
-    def __init__(self, on_step: StepCallback | None = None, *, ablation_config: AblationConfig | None = None) -> None:
+    def __init__(self, on_step: StepCallback | None = None, *, ablation_config: AblationConfig | None = None, memory_store=None) -> None:
         self.on_step = on_step or (lambda *_: None)
         self.ablation_config = ablation_config or AblationConfig()
+        self.memory_store = memory_store
         self._orchestrator: AgentOrchestrator | None = None
         self._last_run_metrics: dict = {}
 
@@ -25,7 +27,10 @@ class ReportEngine:
         ensure_runtime_config(require_api_key=False)
         start = time.perf_counter()
         before_tokens = token_stats.snapshot()
-        self._orchestrator = AgentOrchestrator(on_step=self.on_step, ablation_config=self.ablation_config)
+        orchestrator_kwargs = {"on_step": self.on_step, "ablation_config": self.ablation_config}
+        if "memory_store" in inspect.signature(AgentOrchestrator).parameters:
+            orchestrator_kwargs["memory_store"] = self.memory_store
+        self._orchestrator = AgentOrchestrator(**orchestrator_kwargs)
         state = self._orchestrator.run(stock_code, uploaded_items=uploaded_items, event_context=event_context)
         elapsed_ms = (time.perf_counter() - start) * 1000
         after_tokens = token_stats.snapshot()

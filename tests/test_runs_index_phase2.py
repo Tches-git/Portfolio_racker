@@ -7,23 +7,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_runs_index_page_exists_and_uses_recent_runs_api():
     page = (ROOT / 'frontend/src/app/runs/page.tsx').read_text(encoding='utf-8')
+    center = (ROOT / 'frontend/src/components/workbench/task-delivery-center.tsx').read_text(encoding='utf-8')
 
-    assert 'fetchRecentRuns' in page
-    assert '全局任务中心' in page
-    assert '运行队列' in page
-    assert '按股票聚合' in page
-    assert '已归档' in page
-    assert '推荐并发' in page
-    assert '运行分布' in page
-    assert 'selectionHint' in page
-    assert '时间线' in page
-    assert 'actions.suggested_next_action' in page
-    assert 'observability.event_count' in page
-    assert 'BatchRunLauncher' in page
+    assert 'fetchRunWorkbench' in page
+    assert '任务交付中心' in page
+    assert '研报与事件点评任务' in page
+    assert '任务列表' in center
+    assert '批量运行' in center
+    assert '当前任务' in center
+    assert 'actions.suggested_next_action' in center
+    assert 'RunActionControls' in center
+    assert 'BatchRunLauncher' in center
     assert '批量多股票运行' in (ROOT / 'frontend/src/components/batch-run-launcher.tsx').read_text(encoding='utf-8')
-    assert 'filterBar' in page
-    assert 'masterDetailPreview' in page
-    assert 'recovery_status' in page
+    assert 'data.runs.workspace.tracked_stocks' in center
 
 
 def test_global_run_center_links_to_runs_index():
@@ -37,11 +33,11 @@ def test_global_run_center_links_to_runs_index():
 
 def test_homepage_and_workspace_link_to_run_center():
     home = (ROOT / 'frontend/src/app/page.tsx').read_text(encoding='utf-8')
-    insights = (ROOT / 'frontend/src/components/workspace-insights.tsx').read_text(encoding='utf-8')
+    dashboard = (ROOT / 'frontend/src/components/workbench/dashboard-overview.tsx').read_text(encoding='utf-8')
 
-    assert 'RecentRunsPanel' in home
-    assert 'fetchWorkspaceStocks' in home
-    assert 'StockCardGrid' in home
-    assert 'QuickActions' in home
-    assert '组合工作区' in insights
-    assert '任务中心' in insights
+    assert 'fetchDashboard' in home
+    assert 'DashboardOverview' in home
+    assert 'SetupWizard' in dashboard
+    assert '组合风险' in dashboard
+    assert '任务交付' in dashboard
+    assert '/runs' in dashboard

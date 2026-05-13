@@ -2,12 +2,6 @@ import Link from 'next/link'
 
 import type { AnalysisRunListResponse } from '../lib/types'
 
-const FAVORITES = [
-  { name: '贵州茅台', code: '600519' },
-  { name: '宁德时代', code: '300750' },
-  { name: '招商银行', code: '600036' },
-]
-
 export function WorkspaceInsights({ stockCode, workspace }: { stockCode: string; workspace: AnalysisRunListResponse }) {
   return (
     <section className="panel span-12">
@@ -18,16 +12,6 @@ export function WorkspaceInsights({ stockCode, workspace }: { stockCode: string;
         </div>
       </div>
       <div className="detailGrid">
-        <div className="card">
-          <div className="itemTitle">快捷收藏</div>
-          <div className="pillRow">
-            {FAVORITES.map((item) => (
-              <Link className="chip" key={item.code} href={`/stocks/${item.code}`}>
-                {item.name}
-              </Link>
-            ))}
-          </div>
-        </div>
         <div className="card">
           <div className="itemTitle">最近访问</div>
           <p className="bodyText">当前正在查看 <strong>{stockCode}</strong>，可继续进入摘要、历史、导出或任务详情页。</p>

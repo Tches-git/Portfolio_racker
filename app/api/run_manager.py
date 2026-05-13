@@ -12,7 +12,10 @@ from uuid import uuid4
 from app.api.mappers import build_run_response
 from app.api.schemas import AnalysisRunListResponse, AnalysisRunResponse, RunStockGroupDTO, WorkspaceSnapshotDTO
 from app.memory.store import get_memory_store
+from app.memory.db_store import UserMemoryStore
 from app.config import OUTPUT_DIR
+from app.db.session import SessionLocal
+from app.db.repositories import save_user_run
 from app.engine import ReportEngine
 from app.models import AnalysisState
 from app.exports.storage import save_output_files
@@ -22,6 +25,7 @@ from app.exports.storage import save_output_files
 class AnalysisRun:
     run_id: str
     stock_code: str
+    user_id: str = ''
     status: str = 'queued'
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -63,7 +67,7 @@ class RunActionError(RuntimeError):
 class AnalysisRunManager:
     _LEGACY_PERSIST_PATH = 'api_runs.json'
     _DB_PATH = 'api_runs.db'
-    _SCHEMA_VERSION = 5
+    _SCHEMA_VERSION = 6
 
     def __init__(self, *, output_dir: Path, worker_count: int = 2, auto_start_workers: bool = True) -> None:
         self._output_dir = output_dir
@@ -81,12 +85,15 @@ class AnalysisRunManager:
         if auto_start_workers:
             self.start_workers()
 
-    def start_run(self, stock_code: str, *, retry_of_run_id: str = '', actor: str = 'system', role: str = 'admin') -> AnalysisRun:
+    def start_run(self, stock_code: str, *, retry_of_run_id: str = '', actor: str = 'system', role: str = 'admin', user_id: str = '') -> AnalysisRun:
         run = AnalysisRun(
             run_id=f'run_{uuid4().hex}',
             stock_code=stock_code.strip(),
+            user_id=user_id,
             detail='已创建分析任务，准备启动引擎',
             retry_of_run_id=retry_of_run_id,
+            owner=actor if actor != 'system' else '',
+            owner_role=role if actor != 'system' else '',
         )
         run.events.append(self._event_payload(run.status, 'run_created', run.detail))
         run.audit_events.append(self._audit_payload(actor, role, 'create_run', f'创建 {run.stock_code} 分析任务'))
@@ -96,7 +103,7 @@ class AnalysisRunManager:
             self._queue_condition.notify()
         return run
 
-    def start_event_run(self, stock_code: str, *, event_context: dict[str, object], actor: str = 'system', role: str = 'admin', retry_of_run_id: str = '') -> AnalysisRun:
+    def start_event_run(self, stock_code: str, *, event_context: dict[str, object], actor: str = 'system', role: str = 'admin', retry_of_run_id: str = '', user_id: str = '') -> AnalysisRun:
         context = dict(event_context or {})
         title = context.get('title', '') or context.get('event_id', '')
         source = context.get('source', '') or context.get('provider', '')
@@ -106,11 +113,14 @@ class AnalysisRunManager:
         run = AnalysisRun(
             run_id=f'run_{uuid4().hex}',
             stock_code=stock_code.strip(),
+            user_id=user_id,
             detail=detail,
             last_event='event_analysis_requested',
             retry_of_run_id=retry_of_run_id,
             event_context=context,
             priority=1,
+            owner=actor if actor != 'system' else '',
+            owner_role=role if actor != 'system' else '',
         )
         run.events.append(self._event_payload(run.status, 'run_created', '已创建事件触发分析任务'))
         run.events.append(self._event_payload(run.status, run.last_event, detail))
@@ -182,14 +192,14 @@ class AnalysisRunManager:
         if run.status != 'failed':
             raise RunActionError('仅失败任务支持重试')
         if run.event_context:
-            retried = self.start_event_run(run.stock_code, event_context=run.event_context, retry_of_run_id=run.run_id, actor=actor, role=role)
+            retried = self.start_event_run(run.stock_code, event_context=run.event_context, retry_of_run_id=run.run_id, actor=actor, role=role, user_id=run.user_id)
         else:
-            retried = self.start_run(run.stock_code, retry_of_run_id=run.run_id, actor=actor, role=role)
+            retried = self.start_run(run.stock_code, retry_of_run_id=run.run_id, actor=actor, role=role, user_id=run.user_id)
         retried.audit_events.append(self._audit_payload(actor, role, 'retry_run', f'重试来源 {run.run_id}'))
         self._save_runs()
         return retried
 
-    def start_batch(self, stock_codes: list[str], *, actor: str = 'system', role: str = 'admin') -> list[AnalysisRun]:
+    def start_batch(self, stock_codes: list[str], *, actor: str = 'system', role: str = 'admin', user_id: str = '') -> list[AnalysisRun]:
         runs = []
         seen = set()
         for code in stock_codes:
@@ -197,7 +207,7 @@ class AnalysisRunManager:
             if not normalized or normalized in seen:
                 continue
             seen.add(normalized)
-            runs.append(self.start_run(normalized, actor=actor, role=role))
+            runs.append(self.start_run(normalized, actor=actor, role=role, user_id=user_id))
         return runs
 
     def get_run_response(self, run_id: str) -> AnalysisRunResponse:
@@ -211,23 +221,37 @@ class AnalysisRunManager:
         for index in range(self._worker_count):
             Thread(target=self._worker_loop, args=(f'worker-{index + 1}',), daemon=True).start()
 
-    def list_runs(self, limit: int = 10) -> AnalysisRunListResponse:
-        ops_metrics = self.ops_metrics()
+    def list_run_objects(self, *, limit: int = 1000, owner: str = '', user_id: str = '') -> list[AnalysisRun]:
         with self._lock:
             ordered_runs = sorted(self._runs.values(), key=lambda item: item.updated_at or item.created_at, reverse=True)
-            runs = ordered_runs[:limit]
+            if user_id:
+                ordered_runs = [item for item in ordered_runs if item.user_id == user_id]
+            if owner:
+                ordered_runs = [item for item in ordered_runs if item.owner == owner]
+            return ordered_runs[: max(1, limit)]
+
+    def list_runs(self, limit: int = 10, *, owner: str = '', user_id: str = '') -> AnalysisRunListResponse:
+        ordered_runs = self.list_run_objects(limit=10_000, owner=owner, user_id=user_id)
+        runs = ordered_runs[: max(1, limit)]
+        ops_metrics = self._ops_metrics_from_runs(ordered_runs)
+        with self._lock:
             status_counts = {
-                'queued': sum(1 for item in self._runs.values() if item.status == 'queued'),
-                'running': sum(1 for item in self._runs.values() if item.status == 'running'),
-                'completed': sum(1 for item in self._runs.values() if item.status == 'completed'),
-                'failed': sum(1 for item in self._runs.values() if item.status == 'failed'),
+                'queued': sum(1 for item in ordered_runs if item.status == 'queued'),
+                'running': sum(1 for item in ordered_runs if item.status == 'running'),
+                'completed': sum(1 for item in ordered_runs if item.status == 'completed'),
+                'failed': sum(1 for item in ordered_runs if item.status == 'failed'),
             }
             stock_groups = self._stock_groups(ordered_runs)
-            archived_run_count = sum(1 for item in self._runs.values() if item.archived)
-            stale_run_count = sum(1 for item in self._runs.values() if item.stale_after_restart)
-            retry_scheduled_count = sum(1 for item in self._runs.values() if item.status == 'queued' and item.next_retry_at)
-            collaborator_count = len({item.owner for item in self._runs.values() if item.owner})
-            audited_action_count = sum(len(item.audit_events) for item in self._runs.values())
+            archived_run_count = sum(1 for item in ordered_runs if item.archived)
+            stale_run_count = sum(1 for item in ordered_runs if item.stale_after_restart)
+            retry_scheduled_count = sum(1 for item in ordered_runs if item.status == 'queued' and item.next_retry_at)
+            collaborator_count = len({item.owner for item in ordered_runs if item.owner})
+            audited_action_count = sum(len(item.audit_events) for item in ordered_runs)
+            history_backed_stock_count = (
+                len({item.stock_code for item in ordered_runs if item.status == 'completed'})
+                if user_id
+                else len(get_memory_store().get_all_stocks())
+            )
         return AnalysisRunListResponse(
             items=[build_run_response(run) for run in runs],
             total=len(ordered_runs),
@@ -241,7 +265,7 @@ class AnalysisRunManager:
                 most_active_stock=stock_groups[0].stock_code if stock_groups else '',
                 latest_completed_stock=next((item.stock_code for item in ordered_runs if item.status == 'completed'), ''),
                 failed_stock_count=sum(1 for group in stock_groups if group.failed_count),
-                history_backed_stock_count=len(get_memory_store().get_all_stocks()),
+                history_backed_stock_count=history_backed_stock_count,
                 recommended_concurrency=3,
                 active_limit_reached=status_counts['queued'] + status_counts['running'] >= 3,
                 observability_status='enhanced',
@@ -267,13 +291,27 @@ class AnalysisRunManager:
             ),
         )
 
-    def list_event_runs(self, *, stock_code: str = '', limit: int = 20) -> list[AnalysisRun]:
+    def list_event_runs(self, *, stock_code: str = '', limit: int = 20, owner: str = '', user_id: str = '') -> list[AnalysisRun]:
         with self._lock:
             runs = [
                 run for run in self._runs.values()
                 if run.event_context and (not stock_code or run.stock_code == stock_code)
+                and (not owner or run.owner == owner)
+                and (not user_id or run.user_id == user_id)
             ]
         return sorted(runs, key=lambda item: item.updated_at or item.created_at, reverse=True)[: max(1, limit)]
+
+    def find_run_by_export(self, filename: str, *, owner: str = '', user_id: str = '') -> AnalysisRun | None:
+        with self._lock:
+            for run in self._runs.values():
+                if user_id and run.user_id != user_id:
+                    continue
+                if owner and run.owner != owner:
+                    continue
+                for export in run.exports:
+                    if export.get('filename') == filename:
+                        return run
+        return None
 
     @staticmethod
     def _stock_groups(runs: list[AnalysisRun]) -> list[RunStockGroupDTO]:
@@ -329,6 +367,12 @@ class AnalysisRunManager:
 
     def _execute_run(self, run_id: str) -> None:
         run = self.get_run(run_id)
+        db = None
+        memory_store = None
+        if run.user_id:
+            db = SessionLocal()
+            memory_store = UserMemoryStore(db, run.user_id)
+        output_root = self._run_output_dir(run)
 
         def on_step(event: str, detail: str, state: AnalysisState) -> None:
             if self.get_run(run_id).canceled:
@@ -337,17 +381,30 @@ class AnalysisRunManager:
 
         self._update_run(run_id, status='running', detail='分析引擎已启动', last_event='run_started')
         if self.get_run(run_id).canceled:
+            if db is not None:
+                db.close()
             return
-        engine = ReportEngine(on_step=on_step)
+        try:
+            engine = ReportEngine(on_step=on_step, memory_store=memory_store)
+        except TypeError:
+            engine = ReportEngine(on_step=on_step)
         try:
             state = engine.run(run.stock_code, event_context=run.event_context or None)
             if not state.final_report:
                 self._update_run(run_id, status='failed', detail='分析未生成最终报告', last_event='run_failed', error='分析未生成最终报告')
                 return
-            save_output_files(state, timestamp=self._export_timestamp(state))
+            try:
+                save_output_files(state, root=output_root, timestamp=self._export_timestamp(state))
+            except TypeError:
+                save_output_files(state, timestamp=self._export_timestamp(state))
             self._update_completed_run(run_id, state)
+            if db is not None:
+                save_user_run(db, user_id=run.user_id, run=self.get_run(run_id))
         except Exception as exc:
             self._handle_run_failure(run_id, str(exc))
+        finally:
+            if db is not None:
+                db.close()
 
     def _handle_run_failure(self, run_id: str, error: str) -> None:
         with self._queue_condition:
@@ -378,6 +435,7 @@ class AnalysisRunManager:
 
     def _update_completed_run(self, run_id: str, state: AnalysisState) -> None:
         run = self.get_run(run_id)
+        output_root = self._run_output_dir(run)
         exports = []
         for key, kind in (
             ('report_export', 'markdown'),
@@ -391,7 +449,7 @@ class AnalysisRunManager:
                 exports.append({
                     'kind': kind,
                     'filename': filename,
-                    'path': str(self._output_dir / filename),
+                    'path': str(output_root / filename),
                     'download_url': f'/api/v1/exports/{filename}',
                 })
         event_summary = {}
@@ -404,7 +462,7 @@ class AnalysisRunManager:
                 exports.append({
                     'kind': 'event_commentary',
                     'filename': commentary_filename,
-                    'path': str(self._output_dir / commentary_filename),
+                    'path': str(output_root / commentary_filename),
                     'download_url': f'/api/v1/exports/{commentary_filename}',
                 })
         with self._lock:
@@ -476,11 +534,12 @@ class AnalysisRunManager:
         context = dict(run.event_context or {})
         if not context:
             return ''
-        self._output_dir.mkdir(parents=True, exist_ok=True)
+        output_root = self._run_output_dir(run)
+        output_root.mkdir(parents=True, exist_ok=True)
         safe_event_id = ''.join(ch for ch in str(context.get('event_id') or run.run_id) if ch.isalnum() or ch in {'_', '-'})[:48] or run.run_id
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f'event_commentary_{run.stock_code}_{safe_event_id}_{run.run_id[-8:]}_{timestamp}.md'
-        path = self._output_dir / filename
+        path = output_root / filename
         sections = dict(getattr(state, 'sections', {}) or {})
         report_excerpt = str(getattr(state, 'final_report', '') or '').strip()[:1000]
         source = str(context.get('source') or context.get('provider') or '未知来源')
@@ -534,6 +593,11 @@ class AnalysisRunManager:
             state.sections['event_commentary_export'] = filename
         return filename
 
+    def _run_output_dir(self, run: AnalysisRun) -> Path:
+        if run.user_id:
+            return self._output_dir / 'users' / run.user_id
+        return self._output_dir
+
     def _update_run(self, run_id: str, *, status: str | None = None, detail: str | None = None, last_event: str | None = None, error: str | None = None) -> None:
         with self._lock:
             run = self._runs[run_id]
@@ -562,6 +626,7 @@ class AnalysisRunManager:
                 CREATE TABLE IF NOT EXISTS api_runs (
                     run_id TEXT PRIMARY KEY,
                     stock_code TEXT NOT NULL,
+                    user_id TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -595,6 +660,8 @@ class AnalysisRunManager:
             columns = {item[1] for item in conn.execute("PRAGMA table_info(api_runs)").fetchall()}
             if 'owner_role' not in columns:
                 conn.execute("ALTER TABLE api_runs ADD COLUMN owner_role TEXT NOT NULL DEFAULT '' ")
+            if 'user_id' not in columns:
+                conn.execute("ALTER TABLE api_runs ADD COLUMN user_id TEXT NOT NULL DEFAULT '' ")
             if 'run_metrics_json' not in columns:
                 conn.execute("ALTER TABLE api_runs ADD COLUMN run_metrics_json TEXT NOT NULL DEFAULT '{}' ")
             if 'recovery_status' not in columns:
@@ -620,6 +687,7 @@ class AnalysisRunManager:
             conn.execute('CREATE INDEX IF NOT EXISTS idx_api_runs_status_updated ON api_runs(status, updated_at)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_api_runs_stock_updated ON api_runs(stock_code, updated_at)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_api_runs_owner ON api_runs(owner)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_api_runs_user_id ON api_runs(user_id)')
             conn.commit()
 
     def _load_runs(self) -> None:
@@ -633,7 +701,7 @@ class AnalysisRunManager:
                            error, owner, owner_role, archived, retry_of_run_id, canceled, latest_report_url,
                            history_url, recovery_status, stale_after_restart, attempts, max_attempts,
                            priority, worker_id, locked_at, next_retry_at, run_metrics_json, event_context_json,
-                           event_report_summary_json, exports_json, events_json, audit_events_json
+                           event_report_summary_json, exports_json, events_json, audit_events_json, user_id
                     FROM api_runs
                     ORDER BY updated_at DESC
                     '''
@@ -657,6 +725,7 @@ class AnalysisRunManager:
             payload.setdefault('recovery_status', 'normal')
             payload.setdefault('stale_after_restart', False)
             payload.setdefault('owner_role', '')
+            payload.setdefault('user_id', '')
             payload.setdefault('audit_events', [])
             payload.setdefault('attempts', 0)
             payload.setdefault('max_attempts', 2)
@@ -683,14 +752,17 @@ class AnalysisRunManager:
     def ops_metrics(self) -> dict[str, object]:
         with self._lock:
             runs = list(self._runs.values())
-            total_runs = len(runs)
-            active_runs = sum(1 for item in runs if item.status in {'queued', 'running'})
-            failed_runs = sum(1 for item in runs if item.status == 'failed')
-            durations = sorted(float(item.run_metrics.get('duration_s', 0.0) or 0.0) for item in runs if item.run_metrics)
-            recent_events = []
-            for run in runs:
-                for event in run.events[-3:]:
-                    recent_events.append({**event, 'run_id': run.run_id, 'stock_code': run.stock_code})
+        return self._ops_metrics_from_runs(runs)
+
+    def _ops_metrics_from_runs(self, runs: list[AnalysisRun]) -> dict[str, object]:
+        total_runs = len(runs)
+        active_runs = sum(1 for item in runs if item.status in {'queued', 'running'})
+        failed_runs = sum(1 for item in runs if item.status == 'failed')
+        durations = sorted(float(item.run_metrics.get('duration_s', 0.0) or 0.0) for item in runs if item.run_metrics)
+        recent_events = []
+        for run in runs:
+            for event in run.events[-3:]:
+                recent_events.append({**event, 'run_id': run.run_id, 'stock_code': run.stock_code})
         failure_rate = (failed_runs / total_runs) if total_runs else 0.0
         avg_duration_s = (sum(durations) / len(durations)) if durations else 0.0
         p95_duration_s = durations[min(len(durations) - 1, int(len(durations) * 0.95))] if durations else 0.0
@@ -747,12 +819,12 @@ class AnalysisRunManager:
             conn.executemany(
                 '''
                 INSERT INTO api_runs (
-                    run_id, stock_code, status, created_at, updated_at, detail, last_event,
+                    run_id, stock_code, user_id, status, created_at, updated_at, detail, last_event,
                     error, owner, owner_role, archived, retry_of_run_id, canceled, latest_report_url,
                     history_url, recovery_status, stale_after_restart, attempts, max_attempts, priority,
                     worker_id, locked_at, next_retry_at, run_metrics_json, event_context_json, event_report_summary_json,
                     exports_json, events_json, audit_events_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
                 [self._run_to_row(run) for run in self._runs.values()],
             )
@@ -763,6 +835,7 @@ class AnalysisRunManager:
         return (
             run.run_id,
             run.stock_code,
+            run.user_id,
             run.status,
             run.created_at,
             run.updated_at,
@@ -829,6 +902,7 @@ class AnalysisRunManager:
         return AnalysisRun(
             run_id=str(row[0]),
             stock_code=str(row[1]),
+            user_id=str(row[29] or '') if len(row) > 29 else '',
             status=status,
             created_at=str(row[3]),
             updated_at=str(row[4]),

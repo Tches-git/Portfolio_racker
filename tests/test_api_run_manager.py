@@ -304,7 +304,7 @@ def test_run_manager_reports_store_health_and_backup(tmp_path):
 
     assert health['backend'] == 'sqlite-wal'
     assert health['integrity'] == 'ok'
-    assert health['schema_version'] == 5
+    assert health['schema_version'] == 6
     assert Path(backup_path).exists()
     assert payload.workspace.store_backend == 'sqlite-wal'
     assert payload.workspace.backup_available is True

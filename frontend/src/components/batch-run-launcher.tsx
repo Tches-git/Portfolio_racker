@@ -39,7 +39,7 @@ export function BatchRunLauncher({ initialStocks }: { initialStocks: string[] })
       <div className="itemTitle">批量多股票运行</div>
       <p className="bodyText">输入多个股票代码，用逗号或空格分隔，直接进入统一 worker 队列。</p>
       <div className="searchRow launcherRow">
-        <input className="input" value={value} onChange={(event) => setValue(event.target.value)} placeholder="600519, 000858, 300750" />
+        <input className="input" value={value} onChange={(event) => setValue(event.target.value)} placeholder="输入多个 6 位股票代码，用逗号或空格分隔" />
         <button className="ghostButton" onClick={() => void launch()} disabled={loading}>{loading ? '入队中...' : '批量入队'}</button>
       </div>
       {message ? <div className={loading ? 'pendingText' : 'inlineMeta'}>{message}</div> : null}

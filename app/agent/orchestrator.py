@@ -57,9 +57,10 @@ StepCallback = Callable[[str, str, AnalysisState], None]
 class AgentOrchestrator:
     """多 Agent 编排器"""
 
-    def __init__(self, on_step: StepCallback | None = None, *, ablation_config: AblationConfig | None = None):
+    def __init__(self, on_step: StepCallback | None = None, *, ablation_config: AblationConfig | None = None, memory_store=None):
         self.on_step = on_step or (lambda *_: None)
         self.ablation_config = ablation_config or AblationConfig()
+        self._memory_store = memory_store
         self._agent_steps: list[dict] = []
         self._rag_hits: list[dict] = []
         self._tracer: Tracer | None = None
@@ -85,7 +86,7 @@ class AgentOrchestrator:
             set_active_tracer(None)
 
     def _run_traced(self, stock_code: str, state: AnalysisState, *, uploaded_items: list[dict]) -> AnalysisState:
-        memory = get_memory_store()
+        memory = self._get_memory_store()
         prev_record = self._prepare_memory_context(state, memory, stock_code)
         kb = self._initialize_knowledge_base(state)
         self._prepare_runtime_inputs(state, uploaded_items)
@@ -94,6 +95,9 @@ class AgentOrchestrator:
         self._run_writer_phase(state, kb, prev_record, graph_summary, section_query_overrides, section_query_refinements)
         self._finalize_run(state, kb, memory, prev_record, stock_code)
         return state
+
+    def _get_memory_store(self):
+        return self._memory_store or get_memory_store()
 
     def _prepare_memory_context(self, state: AnalysisState, memory, stock_code: str):
         prev_record = memory.get_latest(stock_code)
@@ -737,7 +741,7 @@ class AgentOrchestrator:
             f"上次结论摘要: {prev_record.conclusion[:MAX_REPORT_HISTORY_CHARS]}\n"
             f"结构化长期记忆:\n{self._memory_value(state, 'writing_memory_context', '')}"
         )
-        all_records = get_memory_store().get_history(limit=100)
+        all_records = self._get_memory_store().get_history(limit=100)
         history_text = self._compact_report_context(history_text, MAX_REPORT_HISTORY_CHARS, "历史记录")
         peer_records = find_peer_from_history(all_records, prev_record.industry, exclude_code=state.stock_code)
         if peer_records:
