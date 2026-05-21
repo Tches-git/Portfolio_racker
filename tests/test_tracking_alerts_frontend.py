@@ -20,7 +20,13 @@ def test_alerts_page_and_api_client_are_wired():
     assert "预警处理" in event_workbench
     assert "manual_review_count" in event_workbench
     assert "rule_id" in page
-    assert "RiskQueue" in event_workbench
+    assert "alertTapeList" in event_workbench
+    assert "formatAlertTitle" in event_workbench
+    assert "formatStockIdentity" in event_workbench
+    assert "stockNames" in event_workbench
+    assert "fetchStockSearch" in event_page
+    assert "stock_name?: string" in types
+    assert "eventDetailDock" in event_workbench
     assert "EventStatusControls" in event_workbench
     assert "update('reviewed'" in status_controls
     assert "标记已复核" in status_controls

@@ -1,13 +1,7 @@
 import Link from 'next/link'
 
+import { formatAlertSeverity, formatPriority } from '../../lib/labels'
 import type { TrackingAlertListResponse } from '../../lib/types'
-
-function severityText(value: string) {
-  if (value === 'high') return '高'
-  if (value === 'medium') return '中'
-  if (value === 'low') return '低'
-  return value || '未分级'
-}
 
 export function RiskQueue({ alerts, compact = false }: { alerts: TrackingAlertListResponse; compact?: boolean }) {
   return (
@@ -33,7 +27,7 @@ export function RiskQueue({ alerts, compact = false }: { alerts: TrackingAlertLi
           <tbody>
             {alerts.items.slice(0, compact ? 5 : 12).map((alert) => (
               <tr key={alert.alert_id}>
-                <td><span className={`wbBadge ${alert.severity === 'high' ? 'wbBadgeDanger' : ''}`}>{alert.priority || severityText(alert.severity)}</span></td>
+                <td><span className={`wbBadge ${alert.severity === 'high' ? 'tone-danger' : alert.severity === 'medium' ? 'tone-warning' : ''}`}>{alert.priority ? formatPriority(alert.priority) : formatAlertSeverity(alert.severity)}</span></td>
                 <td>
                   <Link className="wbPrimaryText" href={`/events?view=alerts&selected_event_id=${alert.event_id}`}>{alert.title}</Link>
                   <div className="wbMuted">{alert.message || alert.explanation}</div>

@@ -13,11 +13,6 @@ export function SetupWizard({ setup }: { setup: DashboardSetup }) {
           <span>2. 手动刷新组合事件</span>
           <span>3. 在驾驶舱处理预警和研报动作</span>
         </div>
-        {setup.suggested_stock_codes.length ? (
-          <div className="wbChipRow">
-            {setup.suggested_stock_codes.map((code) => <span className="wbChip" key={code}>{code}</span>)}
-          </div>
-        ) : null}
       </div>
       <div className="wbPanel wbSetupForm">
         <WatchlistCreateForm />

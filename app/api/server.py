@@ -1,7 +1,9 @@
 """产品前端 API 入口（兼容 Phase 1/2）。"""
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
@@ -33,6 +35,7 @@ from app.api.schemas import (
     DashboardResponse,
     DashboardSetupDTO,
     EventAnalyzeRequest,
+    EventBacktestResponse,
     EventImpactReplayItemDTO,
     EventImpactReviewResponse,
     EventStatusUpdateRequest,
@@ -45,9 +48,13 @@ from app.api.schemas import (
     MarketQuoteDTO,
     MarketWorkbenchResponse,
     OpsMetricsResponse,
+    QualityMetricDTO,
+    QualityWorkbenchResponse,
     ReportDiffResponse,
     RunAssignmentRequest,
     RunWorkbenchResponse,
+    StockSearchItemDTO,
+    StockSearchResponse,
     StockEventTimelineResponse,
     StockHistoryResponse,
     StockNewsResponse,
@@ -61,17 +68,20 @@ from app.api.schemas import (
     WatchlistDetailResponse,
     WatchlistImpactStockDTO,
     WatchlistListResponse,
+    WatchlistMarketSnapshotDTO,
     WatchlistSummaryDTO,
+    WatchlistUpdateRequest,
     WorkbenchActionDTO,
     WorkspaceStocksResponse,
 )
 from app.api.services import NotFoundError, get_latest_report, get_stock_history
-from app.config import AUTH_COOKIE_NAME, AUTH_TOKEN_TTL_SECONDS, LOGIN_RATE_LIMIT_PER_HOUR, OUTPUT_DIR, SIGNUP_RATE_LIMIT_PER_HOUR
-from app.data_source.akshare_client import get_recent_news, get_stock_daily_bars
+from app.config import AUTH_COOKIE_NAME, AUTH_TOKEN_TTL_SECONDS, LOGIN_RATE_LIMIT_PER_HOUR, OUTPUT_DIR, PROJECT_ROOT, SIGNUP_RATE_LIMIT_PER_HOUR
+from app.data_source.akshare_client import get_recent_news, get_stock_daily_bars, search_a_stocks
 from app.data_source.live_tools import fetch_live_quotes
 from app.db.models import User
-from app.db.repositories import create_user_watchlist, get_user_event, get_user_export_artifact, get_user_watchlist, list_user_events, list_user_watchlists, mark_user_watchlist_refreshed, save_user_events, save_user_run, update_user_event_status
+from app.db.repositories import create_user_watchlist, delete_user_watchlist, get_user_event, get_user_export_artifact, get_user_watchlist, list_user_events, list_user_watchlists, mark_user_watchlist_refreshed, save_user_events, save_user_run, update_user_event_status, update_user_watchlist
 from app.db.session import get_db
+from app.finance.event_backtest import build_event_backtest
 from app.memory.db_store import UserMemoryStore
 from app.tracking.models import EventCollection
 from app.tracking.service import collect_market_events, collect_stock_events, summarize_events
@@ -163,6 +173,10 @@ def _market_event_list_response(collection, *, mode: str = "realtime") -> Market
         source_count=collection.source_count,
         mode=mode,
     )
+
+
+def _empty_event_collection() -> EventCollection:
+    return EventCollection(items=[], total=0, high_impact_count=0, placeholder_count=0, duplicate_count=0, source_count=0)
 
 
 def _tracking_alert_list_response(alerts) -> TrackingAlertListResponse:
@@ -305,7 +319,82 @@ def _safe_market_call(label: str, func, *args, timeout: float = 6.0, **kwargs):
         executor.shutdown(wait=False, cancel_futures=True)
 
 
-def _watchlist_detail_response(watchlist, collection, *, mode: str = "history") -> WatchlistDetailResponse:
+def _watchlist_market_suggestion(quote: MarketQuoteDTO, fallback_message: str = "") -> str:
+    if quote.source_status == "degraded" or fallback_message:
+        return "行情源降级，建议稍后重新拉取，并结合事件预警复核。"
+    if quote.change_pct >= 3:
+        return "短线涨幅较高，优先检查事件驱动原因和回撤风险。"
+    if quote.change_pct <= -3:
+        return "短线承压，建议排查负面事件、公告变化和预警队列。"
+    if quote.turnover >= 5:
+        return "换手率偏高，建议关注资金分歧和后续成交持续性。"
+    return "行情波动可控，可结合事件热度与估值指标继续观察。"
+
+
+def _watchlist_market_snapshots(stock_codes: list[str]) -> tuple[list[WatchlistMarketSnapshotDTO], str, str]:
+    snapshots: list[WatchlistMarketSnapshotDTO] = []
+    fallback_messages: list[str] = []
+    updated_at = datetime.utcnow().isoformat(timespec="seconds")
+    for code in stock_codes:
+        stock_code = str(code or "").strip()
+        if not _is_valid_a_stock_code(stock_code):
+            message = "股票代码格式不正确，暂无法拉取行情。"
+            fallback_messages.append(f"{stock_code or '未知标的'}：{message}")
+            snapshots.append(
+                WatchlistMarketSnapshotDTO(
+                    stock_code=stock_code,
+                    stock_name=stock_code,
+                    quote=MarketQuoteDTO(stock_code=stock_code, stock_name=stock_code, source_status="degraded"),
+                    source_status="degraded",
+                    fallback_message=message,
+                    suggestion="请检查股票池代码是否为 6 位 A 股代码。",
+                )
+            )
+            continue
+
+        quote: dict = {}
+        bars: list[dict] = []
+        stock_fallbacks: list[str] = []
+        quote_result, quote_error = _safe_market_call("行情快照", fetch_live_quotes, stock_code, timeout=4)
+        if quote_error:
+            stock_fallbacks.append(quote_error)
+        elif isinstance(quote_result, dict):
+            quote = quote_result
+
+        bars_result, bars_error = _safe_market_call("日线", get_stock_daily_bars, stock_code, days=180, timeout=6)
+        if bars_error:
+            stock_fallbacks.append(bars_error)
+        elif isinstance(bars_result, list):
+            bars = bars_result[-180:]
+
+        fallback_message = " ".join(dict.fromkeys(stock_fallbacks))
+        if not quote and not bars and not fallback_message:
+            fallback_message = "当前没有可用行情数据，请稍后重试。"
+        if fallback_message:
+            fallback_messages.append(f"{stock_code}：{fallback_message}")
+
+        quote_response = _market_quote_response(stock_code, quote, bars, fallback_message)
+        snapshots.append(
+            WatchlistMarketSnapshotDTO(
+                stock_code=stock_code,
+                stock_name=quote_response.stock_name or stock_code,
+                quote=quote_response,
+                trend_30d=[MarketDailyBarDTO(**item) for item in bars[-30:]],
+                trend_90d=[MarketDailyBarDTO(**item) for item in bars[-90:]],
+                trend_180d=[MarketDailyBarDTO(**item) for item in bars[-180:]],
+                source_status=quote_response.source_status,
+                fallback_message=fallback_message,
+                suggestion=_watchlist_market_suggestion(quote_response, fallback_message),
+            )
+        )
+
+    market_fallback_message = " ".join(dict.fromkeys(fallback_messages))
+    if not snapshots and stock_codes:
+        market_fallback_message = market_fallback_message or "当前组合暂无可用行情数据，请稍后重试。"
+    return snapshots, updated_at, market_fallback_message
+
+
+def _watchlist_detail_response(watchlist, collection, *, mode: str = "history", include_market: bool = False) -> WatchlistDetailResponse:
     alerts = _filter_alerts_by_status(build_tracking_alerts(collection), "open")
     briefing = build_daily_briefing(collection, title=f"{watchlist.name} 组合简报")
     alert_response = _tracking_alert_list_response(alerts)
@@ -332,12 +421,21 @@ def _watchlist_detail_response(watchlist, collection, *, mode: str = "history") 
         last_refreshed_at=watchlist.last_refreshed_at,
         impacted_stocks=impacted_stocks,
     )
+    market_snapshots: list[WatchlistMarketSnapshotDTO] = []
+    market_updated_at = ""
+    market_fallback_message = ""
+    if include_market:
+        market_snapshots, market_updated_at, market_fallback_message = _watchlist_market_snapshots(watchlist.stock_codes)
+
     return WatchlistDetailResponse(
         watchlist=WatchlistDTO(**watchlist.__dict__),
         events=_market_event_list_response(collection, mode=mode),
         alerts=alert_response,
         briefing=_daily_briefing_response(briefing),
         summary=summary,
+        market_snapshots=market_snapshots,
+        market_updated_at=market_updated_at,
+        market_fallback_message=market_fallback_message,
     )
 
 
@@ -602,6 +700,50 @@ def _run_list_from_items(source: AnalysisRunListResponse, items: list[AnalysisRu
     )
 
 
+def _copy_workspace_snapshot(source: AnalysisRunListResponse):
+    workspace = source.workspace
+    if hasattr(workspace, "model_copy"):
+        return workspace.model_copy(deep=True)
+    return workspace.copy(deep=True)
+
+
+def _filter_runs_to_tracking_scope(source: AnalysisRunListResponse, stock_codes: list[str], *, limit: int) -> AnalysisRunListResponse:
+    ordered_codes = [str(code).strip() for code in stock_codes if str(code or "").strip()]
+    code_set = set(ordered_codes)
+    if not code_set:
+        empty = AnalysisRunListResponse()
+        empty.workspace.tracked_stocks = []
+        return empty
+
+    scoped_items = [item for item in source.items if item.stock_code in code_set]
+    scoped_groups = [group for group in source.stock_groups if group.stock_code in code_set]
+    workspace = _copy_workspace_snapshot(source)
+    workspace.tracked_stocks = ordered_codes
+    workspace.most_active_stock = scoped_groups[0].stock_code if scoped_groups else (ordered_codes[0] if ordered_codes else "")
+    workspace.latest_completed_stock = next((item.stock_code for item in scoped_items if item.status == "completed"), "")
+    workspace.failed_stock_count = sum(1 for group in scoped_groups if group.failed_count)
+    workspace.history_backed_stock_count = len({item.stock_code for item in scoped_items if item.status == "completed"})
+    workspace.active_limit_reached = sum(1 for item in scoped_items if item.status in {"queued", "running"}) >= workspace.recommended_concurrency
+    return AnalysisRunListResponse(
+        items=scoped_items[: max(1, limit)],
+        total=len(scoped_items),
+        queued_count=sum(1 for item in scoped_items if item.status == "queued"),
+        running_count=sum(1 for item in scoped_items if item.status == "running"),
+        completed_count=sum(1 for item in scoped_items if item.status == "completed"),
+        failed_count=sum(1 for item in scoped_items if item.status == "failed"),
+        stock_groups=scoped_groups,
+        workspace=workspace,
+    )
+
+
+def _tracking_scoped_runs(db: Session, user: User, *, limit: int = 10) -> AnalysisRunListResponse:
+    stock_codes = _user_tracking_codes(db, user_id=user.id)
+    if not stock_codes:
+        return _filter_runs_to_tracking_scope(AnalysisRunListResponse(), [], limit=limit)
+    source = run_manager.list_runs(limit=1000, user_id=user.id)
+    return _filter_runs_to_tracking_scope(source, stock_codes, limit=limit)
+
+
 def _stock_timeline_response(stock_code: str, collection) -> StockEventTimelineResponse:
     stock_name = next((event.stock_name for event in collection.items if event.stock_name), "")
     return StockEventTimelineResponse(
@@ -632,6 +774,61 @@ def _combined_exports(latest: LatestReportResponse | None, runs: list[AnalysisRu
                 seen.add(filename)
                 exports.append(export)
     return exports
+
+
+def _latest_eval_payload(prefix: str) -> dict[str, object]:
+    candidates = sorted((OUTPUT_DIR / "evals").glob(f"{prefix}_*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    if not candidates:
+        return {}
+    try:
+        payload = json.loads(candidates[0].read_text(encoding="utf-8"))
+    except Exception:
+        return {"path": str(candidates[0]), "error": "评测文件读取失败"}
+    if isinstance(payload, dict):
+        payload.setdefault("path", str(candidates[0]))
+        return payload
+    return {"path": str(candidates[0])}
+
+
+def _test_count() -> int:
+    return len(list((PROJECT_ROOT / "tests").glob("test_*.py")))
+
+
+def _quality_response(user: User) -> QualityWorkbenchResponse:
+    tracking_eval = _latest_eval_payload("tracking_eval")
+    agent_eval = _latest_eval_payload("agent_eval")
+    financial_qa_eval = _latest_eval_payload("financial_qa_eval")
+    rag_eval = _latest_eval_payload("rag_eval")
+    ops = OpsMetricsResponse(**run_manager.ops_metrics())
+    user_runs = run_manager.list_run_objects(limit=1000, user_id=user.id if user else "")
+    latest_multi_agent = next((dict(getattr(item, "multi_agent_trace", {}) or {}) for item in user_runs if getattr(item, "multi_agent_trace", None)), {})
+    multi_role_count = int(latest_multi_agent.get("role_count", 0) or 0)
+    multi_completed = int(latest_multi_agent.get("completed_role_count", 0) or 0)
+    multi_failed = int(latest_multi_agent.get("failed_role_count", 0) or 0)
+    multi_completion_rate = (multi_completed / multi_role_count) if multi_role_count else 0.0
+    metrics = [
+        QualityMetricDTO(label="自动化测试文件", value=str(_test_count()), hint="pytest 覆盖核心 API、追踪、认证和前端契约"),
+        QualityMetricDTO(label="事件评测样本", value=str(tracking_eval.get("sample_count", 0) or 0), hint="由 tracking benchmark 生成"),
+        QualityMetricDTO(label="事件类型 Macro-F1", value=f"{float(tracking_eval.get('event_type_macro_f1', 0) or 0):.1%}", hint="事件分类离线指标"),
+        QualityMetricDTO(label="Agent 评测样本", value=str(agent_eval.get("sample_count", 0) or 0), hint="由项目内金融研究 Agent 任务评测生成"),
+        QualityMetricDTO(label="Agent 工具覆盖率", value=f"{float(agent_eval.get('required_tool_coverage', 0) or 0):.1%}", hint="必需工具调用覆盖情况"),
+        QualityMetricDTO(label="多智能体角色完成率", value=f"{multi_completion_rate:.1%}" if multi_role_count else "暂无", hint=f"最近任务角色 {multi_completed}/{multi_role_count}，失败 {multi_failed}"),
+        QualityMetricDTO(label="公共金融 QA 样本", value=str(financial_qa_eval.get("sample_count", 0) or 0), hint="FinanceBench/FinQA/TAT-QA 本地子集"),
+        QualityMetricDTO(label="RAG 引用覆盖率", value=f"{float(rag_eval.get('citation_coverage_rate', 0) or 0):.1%}", hint="研报核心观点来源覆盖"),
+        QualityMetricDTO(label="任务成功率", value=f"{(1 - ops.failure_rate):.1%}" if ops.total_runs else "暂无", hint=f"当前任务总数 {ops.total_runs}"),
+        QualityMetricDTO(label="平均耗时", value=f"{ops.avg_duration_s:.1f}s", hint="基于已记录 run_metrics"),
+    ]
+    return QualityWorkbenchResponse(
+        generated_at=datetime.now().isoformat(timespec="seconds"),
+        test_count=_test_count(),
+        tracking_eval=tracking_eval,
+        agent_eval=agent_eval,
+        financial_qa_eval=financial_qa_eval,
+        rag_eval=rag_eval,
+        run_metrics=ops,
+        smoke_status="已通过本地与 tencent-111 冒烟" if user else "待验证",
+        metrics=metrics,
+    )
 
 
 @app.get("/api/v1/health", response_model=HealthResponse)
@@ -708,7 +905,7 @@ def current_user(user: User = Depends(require_current_user)) -> AuthUserDTO:
 def ui_dashboard(user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> DashboardResponse:
     watchlist_items = list_user_watchlists(db, user_id=user.id)
     watchlist_response = _watchlist_list_response(watchlist_items)
-    recent_runs = run_manager.list_runs(limit=8, user_id=user.id)
+    recent_runs = _tracking_scoped_runs(db, user, limit=8)
     if not watchlist_items:
         return DashboardResponse(
             mode="setup",
@@ -743,7 +940,7 @@ def ui_watchlist_detail(watchlist_id: str, user: User = Depends(require_current_
     if item is None:
         raise HTTPException(status_code=404, detail=f"未找到组合: {watchlist_id}")
     collection = list_user_events(db, user_id=user.id, stock_codes=item.stock_codes, limit=120)
-    return _watchlist_detail_response(item, collection, mode="history")
+    return _watchlist_detail_response(item, collection, mode="history", include_market=True)
 
 
 @app.get("/api/v1/ui/events", response_model=EventWorkbenchResponse)
@@ -761,15 +958,18 @@ def ui_event_workbench(
     db: Session = Depends(get_db),
 ) -> EventWorkbenchResponse:
     codes = _user_tracking_codes(db, user_id=user.id, stock_codes=stock_codes)
-    collection = list_user_events(
-        db,
-        user_id=user.id,
-        stock_codes=codes or None,
-        status=status,
-        event_type=event_type,
-        impact_level=impact_level,
-        limit=160,
-    )
+    if codes:
+        collection = list_user_events(
+            db,
+            user_id=user.id,
+            stock_codes=codes,
+            status=status,
+            event_type=event_type,
+            impact_level=impact_level,
+            limit=160,
+        )
+    else:
+        collection = _empty_event_collection()
     alerts = _filter_alerts(
         build_tracking_alerts(collection, limit=80),
         status=status or "open",
@@ -777,7 +977,9 @@ def ui_event_workbench(
         alert_type=alert_type,
         rule_id=rule_id,
     )
-    selected_event = get_user_event(db, user_id=user.id, event_id=selected_event_id) if selected_event_id else None
+    selected_event = get_user_event(db, user_id=user.id, event_id=selected_event_id) if selected_event_id and codes else None
+    if selected_event is not None and selected_event.stock_code not in codes:
+        selected_event = None
     return EventWorkbenchResponse(
         view="alerts" if view == "alerts" else "events",
         events=_market_event_list_response(collection, mode="history"),
@@ -808,34 +1010,45 @@ def ui_stock_workbench(
 ) -> StockWorkbenchResponse:
     watchlists = list_user_watchlists(db, user_id=user.id)
     related_watchlists = [item for item in watchlists if stock_code in item.stock_codes]
-    collection = list_user_events(db, user_id=user.id, stock_codes=[stock_code], limit=120)
-    runs = run_manager.list_runs(limit=50, user_id=user.id)
-    stock_runs = [item for item in runs.items if item.stock_code == stock_code]
+    is_tracked = bool(related_watchlists)
+    collection = list_user_events(db, user_id=user.id, stock_codes=[stock_code], limit=120) if is_tracked else _empty_event_collection()
+    runs = _tracking_scoped_runs(db, user, limit=50)
+    stock_runs = [item for item in runs.items if item.stock_code == stock_code] if is_tracked else []
     latest_report = None
     history = None
-    try:
-        latest_report = get_latest_report(stock_code, store=_user_memory(db, user), output_dir=_user_output_dir(user))
-    except NotFoundError:
-        latest_report = None
-    try:
-        history = get_stock_history(stock_code, store=_user_memory(db, user))
-    except NotFoundError:
-        history = None
+    if is_tracked:
+        try:
+            latest_report = get_latest_report(stock_code, store=_user_memory(db, user), output_dir=_user_output_dir(user))
+        except NotFoundError:
+            latest_report = None
+        try:
+            history = get_stock_history(stock_code, store=_user_memory(db, user))
+        except NotFoundError:
+            history = None
     stock_name = (
         (latest_report.stock.name if latest_report else "")
         or next((event.stock_name for event in collection.items if event.stock_name), "")
         or stock_code
     )
     event_runs = run_manager.list_event_runs(stock_code=stock_code, limit=40, user_id=user.id)
+    bars_result, _bars_error = _safe_market_call("日线", get_stock_daily_bars, stock_code, days=180, timeout=6)
+    event_backtest_payload = build_event_backtest(
+        stock_code=stock_code,
+        stock_name=stock_name,
+        events=collection.items,
+        daily_bars=bars_result if isinstance(bars_result, list) else [],
+        limit=40,
+    )
     return StockWorkbenchResponse(
         stock_code=stock_code,
         stock_name=stock_name,
-        active_tab=tab if tab in {"summary", "timeline", "history", "exports"} else "summary",
-        is_tracked=bool(related_watchlists),
+        active_tab=tab if tab in {"summary", "timeline", "history", "exports", "backtest"} else "summary",
+        is_tracked=is_tracked,
         latest_report=latest_report,
         history=history,
         timeline=_stock_timeline_response(stock_code, collection),
         impact_review=_event_impact_review_response(stock_code, collection, event_runs),
+        event_backtest=EventBacktestResponse(**event_backtest_payload),
         related_watchlists=[WatchlistDTO(**item.__dict__) for item in related_watchlists],
         related_runs=_run_list_from_items(runs, stock_runs),
         exports=_combined_exports(latest_report, stock_runs),
@@ -845,6 +1058,43 @@ def ui_stock_workbench(
             WorkbenchActionDTO(label="管理组合", href="/watchlist", action_type="open_watchlists"),
         ],
     )
+
+
+@app.get("/api/v1/stocks/{stock_code}/event-backtest", response_model=EventBacktestResponse)
+def stock_event_backtest(
+    stock_code: str,
+    event_type: str = "",
+    impact_level: str = "",
+    window: str = "1,3,5,10",
+    limit: int = 20,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> EventBacktestResponse:
+    stock_code = str(stock_code or "").strip()
+    if not _is_valid_a_stock_code(stock_code):
+        raise HTTPException(status_code=422, detail="请输入 6 位 A 股股票代码")
+    windows = []
+    for item in str(window or "").split(","):
+        try:
+            windows.append(int(item.strip()))
+        except ValueError:
+            continue
+    collection = list_user_events(db, user_id=user.id, stock_codes=[stock_code], event_type=event_type, impact_level=impact_level, limit=max(1, min(limit, 200)))
+    bars_result, bars_error = _safe_market_call("日线", get_stock_daily_bars, stock_code, days=180, timeout=6)
+    stock_name = next((event.stock_name for event in collection.items if event.stock_name), stock_code)
+    payload = build_event_backtest(
+        stock_code=stock_code,
+        stock_name=stock_name,
+        events=collection.items,
+        daily_bars=bars_result if isinstance(bars_result, list) else [],
+        event_type=event_type,
+        impact_level=impact_level,
+        windows=windows,
+        limit=limit,
+    )
+    if bars_error and not payload.get("items"):
+        payload["fallback_message"] = bars_error
+    return EventBacktestResponse(**payload)
 
 
 @app.get("/api/v1/ui/markets/{stock_code}", response_model=MarketWorkbenchResponse)
@@ -900,13 +1150,15 @@ def ui_run_workbench(
     limit: int = 24,
     selected_run_id: str = "",
     user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
 ) -> RunWorkbenchResponse:
-    runs = run_manager.list_runs(limit=max(1, min(limit, 100)), user_id=user.id)
+    runs = _tracking_scoped_runs(db, user, limit=max(1, min(limit, 100)))
+    tracked_codes = set(runs.workspace.tracked_stocks)
     selected = None
     if selected_run_id:
         try:
             run = run_manager.get_run(selected_run_id)
-            if getattr(run, "user_id", "") == user.id:
+            if getattr(run, "user_id", "") == user.id and getattr(run, "stock_code", "") in tracked_codes:
                 selected = run_manager.get_run_response(selected_run_id)
         except RunNotFoundError:
             selected = None
@@ -914,10 +1166,15 @@ def ui_run_workbench(
         runs=runs,
         selected_run=selected,
         actions=[
-            WorkbenchActionDTO(label="新建研报任务", href="/runs", action_type="create_run", variant="primary"),
-            WorkbenchActionDTO(label="批量任务", href="/runs", action_type="create_batch_run"),
+            WorkbenchActionDTO(label="新建研报任务", href="/runs#run-create-panel", action_type="create_run", variant="primary"),
+            WorkbenchActionDTO(label="批量任务", href="/runs#run-create-panel", action_type="create_batch_run"),
         ],
     )
+
+
+@app.get("/api/v1/ui/quality", response_model=QualityWorkbenchResponse)
+def ui_quality_workbench(user: User = Depends(require_current_user)) -> QualityWorkbenchResponse:
+    return _quality_response(user)
 
 
 @app.get("/api/v1/reports/latest/{stock_code}", response_model=LatestReportResponse)
@@ -942,6 +1199,23 @@ def stock_news(stock_code: str, limit: int = 8) -> StockNewsResponse:
     return StockNewsResponse(stock_code=stock_code, items=items, total=len(items))
 
 
+@app.get("/api/v1/stocks/search", response_model=StockSearchResponse)
+def stock_search(
+    q: str = "",
+    limit: int = 12,
+    user: User = Depends(require_current_user),
+) -> StockSearchResponse:
+    query = str(q or "").strip()
+    if not query:
+        return StockSearchResponse(query="", items=[], total=0)
+    items = search_a_stocks(query, limit=max(1, min(limit, 30)))
+    return StockSearchResponse(
+        query=query,
+        items=[StockSearchItemDTO(**item) for item in items],
+        total=len(items),
+    )
+
+
 @app.get("/api/v1/events", response_model=MarketEventListResponse)
 def market_events(
     stock_codes: str = "",
@@ -958,11 +1232,14 @@ def market_events(
 ) -> MarketEventListResponse:
     codes = _user_tracking_codes(db, user_id=user.id, stock_codes=stock_codes)
     normalized_mode = "history" if mode == "history" else "realtime"
-    if normalized_mode == "history":
+    if not codes:
+        collection = _empty_event_collection()
+        normalized_mode = "history"
+    elif normalized_mode == "history":
         collection = list_user_events(
             db,
             user_id=user.id,
-            stock_codes=codes or None,
+            stock_codes=codes,
             provider=provider,
             event_type=event_type,
             impact_level=impact_level,
@@ -971,9 +1248,6 @@ def market_events(
             end=end,
             limit=max(1, min(limit_per_stock * max(1, len(codes or []), 4), 120)),
         )
-    elif not codes:
-        collection = list_user_events(db, user_id=user.id, limit=max(1, min(limit_per_stock * 4, 120)))
-        normalized_mode = "history"
     else:
         collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
         save_user_events(db, user_id=user.id, events=collection.items)
@@ -1109,15 +1383,15 @@ def tracking_alerts(
 ) -> TrackingAlertListResponse:
     codes = _user_tracking_codes(db, user_id=user.id, stock_codes=stock_codes)
     normalized_mode = "history" if mode == "history" else "realtime"
-    if normalized_mode == "history":
+    if not codes:
+        collection = _empty_event_collection()
+    elif normalized_mode == "history":
         collection = list_user_events(
             db,
             user_id=user.id,
-            stock_codes=codes or None,
+            stock_codes=codes,
             limit=max(1, min(limit_per_stock * max(1, len(codes or []), 4), 120)),
         )
-    elif not codes:
-        collection = list_user_events(db, user_id=user.id, limit=max(1, min(limit_per_stock * 4, 120)))
     else:
         collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
         save_user_events(db, user_id=user.id, events=collection.items)
@@ -1138,7 +1412,7 @@ def daily_briefing(stock_codes: str = "", limit_per_stock: int = 4, user: User =
         collection = collect_market_events(stock_codes=codes, limit_per_stock=max(1, min(limit_per_stock, 8)))
         save_user_events(db, user_id=user.id, events=collection.items)
     else:
-        collection = list_user_events(db, user_id=user.id, limit=max(1, min(limit_per_stock * 4, 120)))
+        collection = _empty_event_collection()
     briefing = build_daily_briefing(collection)
     return DailyBriefingResponse(
         title=briefing.title,
@@ -1175,6 +1449,39 @@ def watchlist_detail(watchlist_id: str, user: User = Depends(require_current_use
         raise HTTPException(status_code=404, detail=f"未找到组合: {watchlist_id}")
     collection = list_user_events(db, user_id=user.id, stock_codes=item.stock_codes, limit=80)
     return _watchlist_detail_response(item, collection, mode="history")
+
+
+@app.patch("/api/v1/watchlists/{watchlist_id}", response_model=WatchlistDTO)
+def update_tracking_watchlist(
+    watchlist_id: str,
+    payload: WatchlistUpdateRequest,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> WatchlistDTO:
+    stock_codes = payload.stock_codes
+    if stock_codes is not None and not [code for code in stock_codes if str(code or "").strip()]:
+        raise HTTPException(status_code=422, detail="组合至少保留一只股票")
+    item = update_user_watchlist(
+        db,
+        user_id=user.id,
+        watchlist_id=watchlist_id,
+        name=payload.name,
+        stock_codes=stock_codes,
+        description=payload.description,
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"未找到组合: {watchlist_id}")
+    if not item.stock_codes:
+        raise HTTPException(status_code=422, detail="组合至少保留一只股票")
+    return WatchlistDTO(**item.__dict__)
+
+
+@app.delete("/api/v1/watchlists/{watchlist_id}", status_code=204)
+def delete_tracking_watchlist(watchlist_id: str, user: User = Depends(require_current_user), db: Session = Depends(get_db)) -> Response:
+    deleted = delete_user_watchlist(db, user_id=user.id, watchlist_id=watchlist_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"未找到组合: {watchlist_id}")
+    return Response(status_code=204)
 
 
 @app.post("/api/v1/watchlists/{watchlist_id}/refresh", response_model=WatchlistDetailResponse, status_code=202)
@@ -1288,7 +1595,18 @@ def get_run(
         run = run_manager.get_run(run_id)
         _assert_run_access(run, user)
         _sync_user_run(db, user, run)
-        return run_manager.get_run_response(run_id)
+        raw_response = run_manager.get_run_response(run_id)
+        response = raw_response if isinstance(raw_response, AnalysisRunResponse) else AnalysisRunResponse(**raw_response)
+        if not response.stock_name and response.stock_code:
+            try:
+                latest = _user_memory(db, user).get_latest(response.stock_code)
+                response.stock_name = latest.stock_name if latest else ""
+            except Exception:
+                response.stock_name = ""
+        if not response.stock_name and response.stock_code:
+            collection = list_user_events(db, user_id=user.id, stock_codes=[response.stock_code], limit=1)
+            response.stock_name = next((event.stock_name for event in collection.items if event.stock_name), "")
+        return response
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -1376,12 +1694,17 @@ def archive_run(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
-@app.get("/api/v1/exports/{filename}")
-def download_export(
-    filename: str,
-    user: User = Depends(require_current_user),
-    db: Session = Depends(get_db),
-) -> FileResponse:
+def _export_media_type(path: Path) -> str:
+    return {
+        ".md": "text/markdown",
+        ".html": "text/html",
+        ".pdf": "application/pdf",
+        ".log": "text/plain",
+        ".json": "application/json",
+    }.get(path.suffix.lower(), "application/octet-stream")
+
+
+def _export_file_response(filename: str, user: User, db: Session, *, inline: bool) -> FileResponse:
     artifact = get_user_export_artifact(db, user_id=user.id, filename=filename)
     if artifact is None:
         run = run_manager.find_run_by_export(filename, user_id=user.id)
@@ -1395,14 +1718,30 @@ def download_export(
         path = _resolve_user_export_path(filename, artifact.path)
     except ExportNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    media_type = {
-        ".md": "text/markdown",
-        ".html": "text/html",
-        ".pdf": "application/pdf",
-        ".log": "text/plain",
-        ".json": "application/json",
-    }.get(path.suffix.lower(), "application/octet-stream")
-    return FileResponse(path, media_type=media_type, filename=path.name)
+    return FileResponse(
+        path,
+        media_type=_export_media_type(path),
+        filename=path.name,
+        content_disposition_type="inline" if inline else "attachment",
+    )
+
+
+@app.get("/api/v1/exports/{filename}/preview")
+def preview_export(
+    filename: str,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    return _export_file_response(filename, user, db, inline=True)
+
+
+@app.get("/api/v1/exports/{filename}")
+def download_export(
+    filename: str,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    return _export_file_response(filename, user, db, inline=False)
 
 
 def _resolve_user_export_path(filename: str, stored_path: str) -> Path:

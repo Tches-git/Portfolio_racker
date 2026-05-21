@@ -10,16 +10,20 @@ def test_runs_index_page_exists_and_uses_recent_runs_api():
     center = (ROOT / 'frontend/src/components/workbench/task-delivery-center.tsx').read_text(encoding='utf-8')
 
     assert 'fetchRunWorkbench' in page
-    assert '任务交付中心' in page
-    assert '研报与事件点评任务' in page
-    assert '任务列表' in center
-    assert '批量运行' in center
-    assert '当前任务' in center
-    assert 'actions.suggested_next_action' in center
+    assert '多智能体研报任务台' in page
+    assert '可信度审计和交付物' in page
+    assert '研报任务队列' in center
+    assert 'CREATE' in center
+    assert 'CURRENT MISSION' in center
+    assert 'currentAgentRole' in center
     assert 'RunActionControls' in center
     assert 'BatchRunLauncher' in center
+    assert 'run-create-panel' in center
+    assert 'runCreatePanelTarget' in center
     assert '批量多股票运行' in (ROOT / 'frontend/src/components/batch-run-launcher.tsx').read_text(encoding='utf-8')
+    assert 'data-run-launcher-input' in (ROOT / 'frontend/src/components/batch-run-launcher.tsx').read_text(encoding='utf-8')
     assert 'data.runs.workspace.tracked_stocks' in center
+    assert '/runs#run-create-panel' in (ROOT / 'app/api/server.py').read_text(encoding='utf-8')
 
 
 def test_global_run_center_links_to_runs_index():

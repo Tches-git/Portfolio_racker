@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="空账号首页示意图">
+  <rect width="1280" height="720" fill="#05080d"/>
+  <rect x="0" y="0" width="236" height="720" fill="#070b11"/>
+  <rect x="236" y="0" width="1044" height="46" fill="#05080d" stroke="#1b2635"/>
+  <text x="26" y="40" fill="#f6b73c" font-size="20" font-family="Arial, sans-serif" font-weight="700">金融研究终端</text>
+  <text x="26" y="72" fill="#697a91" font-size="13" font-family="Arial, sans-serif">多智能体金融研究终端</text>
+  <text x="272" y="30" fill="#f6b73c" font-size="14" font-family="Arial, sans-serif" font-weight="700">风险驾驶舱</text>
+  <text x="390" y="30" fill="#8fa0b7" font-size="14" font-family="Arial, sans-serif">组合监控</text>
+  <text x="498" y="30" fill="#8fa0b7" font-size="14" font-family="Arial, sans-serif">事件预警台</text>
+  <text x="626" y="30" fill="#8fa0b7" font-size="14" font-family="Arial, sans-serif">任务交付</text>
+  <rect x="272" y="92" width="940" height="500" fill="#07111b" stroke="#26374a"/>
+  <text x="328" y="150" fill="#f6b73c" font-size="13" font-family="Arial, sans-serif" font-weight="700">新工作区</text>
+  <text x="328" y="190" fill="#f8fafc" font-size="32" font-family="Arial, sans-serif" font-weight="800">创建第一个组合</text>
+  <text x="328" y="228" fill="#8fa0b7" font-size="16" font-family="Arial, sans-serif">新账号不会加载演示数据。先创建股票池，再刷新事件与预警。</text>
+  <rect x="328" y="276" width="420" height="48" rx="3" fill="#090f17" stroke="#2b3a4d"/>
+  <text x="348" y="306" fill="#8fa0b7" font-size="15" font-family="Arial, sans-serif">组合名称，例如：核心持仓</text>
+  <rect x="328" y="344" width="420" height="48" rx="3" fill="#090f17" stroke="#2b3a4d"/>
+  <text x="348" y="374" fill="#8fa0b7" font-size="15" font-family="Arial, sans-serif">输入股票名称或 6 位代码搜索</text>
+  <rect x="328" y="420" width="180" height="42" rx="3" fill="#f6b73c"/>
+  <text x="378" y="447" fill="#05080d" font-size="15" font-family="Arial, sans-serif" font-weight="800">创建组合</text>
+  <rect x="806" y="150" width="330" height="292" fill="#080d13" stroke="#1f3046"/>
+  <text x="834" y="190" fill="#edf4ff" font-size="18" font-family="Arial, sans-serif" font-weight="700">从零开始的路径</text>
+  <text x="834" y="232" fill="#9fb0c6" font-size="15" font-family="Arial, sans-serif">1. 创建组合</text>
+  <text x="834" y="268" fill="#9fb0c6" font-size="15" font-family="Arial, sans-serif">2. 刷新事件</text>
+  <text x="834" y="304" fill="#9fb0c6" font-size="15" font-family="Arial, sans-serif">3. 处理预警</text>
+  <text x="834" y="340" fill="#9fb0c6" font-size="15" font-family="Arial, sans-serif">4. 生成研报</text>
+  <text x="834" y="376" fill="#9fb0c6" font-size="15" font-family="Arial, sans-serif">5. 预览 / 下载交付物</text>
+</svg>

@@ -26,6 +26,21 @@ logger = logging.getLogger("fin.data")
 
 HEADERS = {"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
 
+_FALLBACK_STOCK_UNIVERSE = [
+    {"code": "600519", "name": "贵州茅台", "aliases": "gzmt maotai"},
+    {"code": "000858", "name": "五粮液", "aliases": "wly"},
+    {"code": "300750", "name": "宁德时代", "aliases": "ndsd catl"},
+    {"code": "000333", "name": "美的集团", "aliases": "mdjt midea"},
+    {"code": "600036", "name": "招商银行", "aliases": "zsyh cmb"},
+    {"code": "601318", "name": "中国平安", "aliases": "zgpa pingan"},
+    {"code": "600276", "name": "恒瑞医药", "aliases": "hryy"},
+    {"code": "002415", "name": "海康威视", "aliases": "hkws hikvision"},
+    {"code": "002594", "name": "比亚迪", "aliases": "byd"},
+    {"code": "601012", "name": "隆基绿能", "aliases": "ljln longi"},
+    {"code": "601899", "name": "紫金矿业", "aliases": "zjky"},
+    {"code": "000002", "name": "万科A", "aliases": "wka vanke"},
+]
+
 
 def _recent_report_dates(n: int = 4) -> list[str]:
     """生成最近 n 个财报期截止日（格式 YYYYMMDD），按时间倒序"""
@@ -98,6 +113,112 @@ def _validate_stock_code(code: str) -> str:
     return code
 
 
+def _normalize_stock_directory_item(raw: dict) -> dict[str, str] | None:
+    code = str(
+        raw.get("code")
+        or raw.get("股票代码")
+        or raw.get("证券代码")
+        or raw.get("代码")
+        or ""
+    ).strip().zfill(6)
+    name = str(
+        raw.get("name")
+        or raw.get("股票简称")
+        or raw.get("证券简称")
+        or raw.get("名称")
+        or ""
+    ).strip()
+    if not re.match(r"^\d{6}$", code) or not name:
+        return None
+    return {"code": code, "name": name, "aliases": str(raw.get("aliases") or "").strip()}
+
+
+def _load_stock_directory() -> list[dict[str, str]]:
+    cache_key = "stock_a_code_name_directory"
+    cached = _read_cache(cache_key, max_age=86400)
+    if cached and isinstance(cached.get("items"), list):
+        items = [_normalize_stock_directory_item(item) for item in cached["items"] if isinstance(item, dict)]
+        return [item for item in items if item]
+
+    try:
+        import akshare as ak
+
+        df = ak.stock_info_a_code_name()
+        rows = df.to_dict("records") if df is not None and not df.empty else []
+        items = [_normalize_stock_directory_item(row) for row in rows]
+        items = [item for item in items if item]
+        if items:
+            _write_cache(cache_key, {"items": items})
+            return items
+    except Exception as exc:
+        logger.warning("A 股代码表获取失败，使用本地降级列表: %s", exc)
+
+    return list(_FALLBACK_STOCK_UNIVERSE)
+
+
+def _is_subsequence(needle: str, haystack: str) -> bool:
+    if not needle:
+        return False
+    cursor = 0
+    for char in haystack:
+        if cursor < len(needle) and char == needle[cursor]:
+            cursor += 1
+    return cursor == len(needle)
+
+
+def _stock_search_score(query: str, item: dict[str, str]) -> tuple[int, str]:
+    code = item.get("code", "")
+    name = item.get("name", "")
+    aliases = item.get("aliases", "").lower()
+    normalized = query.lower().replace(" ", "")
+    name_lc = name.lower()
+    if not normalized:
+        return 0, ""
+    if normalized == code:
+        return 120, code
+    if code.startswith(normalized):
+        return 100 - len(code.replace(normalized, "", 1)), code
+    if normalized == name_lc:
+        return 115, name
+    if name_lc.startswith(normalized):
+        return 105, name
+    if normalized in name_lc:
+        return 88, name
+    if aliases and normalized in aliases.replace(" ", ""):
+        return 76, aliases
+    if _is_subsequence(normalized, name_lc):
+        return 52, name
+    return 0, ""
+
+
+def search_a_stocks(query: str, limit: int = 12) -> list[dict[str, str]]:
+    """按代码或股票名称模糊搜索 A 股股票，数据源失败时使用本地降级列表。"""
+    query = str(query or "").strip()
+    limit = max(1, min(int(limit or 12), 30))
+    if not query:
+        return []
+    matches: list[dict[str, str | int]] = []
+    for item in _load_stock_directory():
+        score, match_text = _stock_search_score(query, item)
+        if score <= 0:
+            continue
+        matches.append({
+            "code": item["code"],
+            "name": item["name"],
+            "match_text": match_text,
+            "score": score,
+        })
+    matches.sort(key=lambda item: (-int(item["score"]), str(item["code"])))
+    return [
+        {
+            "code": str(item["code"]),
+            "name": str(item["name"]),
+            "match_text": str(item["match_text"]),
+        }
+        for item in matches[:limit]
+    ]
+
+
 def _safe_float(val) -> float:
     if val is None:
         return 0.0
@@ -142,14 +263,25 @@ def get_stock_daily_bars(code: str, days: int = 90) -> list[dict]:
 
     end = datetime.now()
     start = end - timedelta(days=max(days * 3, 90))
-    df = ak.stock_zh_a_hist(
-        symbol=code,
-        period="daily",
-        start_date=start.strftime("%Y%m%d"),
-        end_date=end.strftime("%Y%m%d"),
-        adjust="qfq",
-    )
+    try:
+        df = ak.stock_zh_a_hist(
+            symbol=code,
+            period="daily",
+            start_date=start.strftime("%Y%m%d"),
+            end_date=end.strftime("%Y%m%d"),
+            adjust="qfq",
+        )
+    except Exception:
+        stale_cached = _read_cache(cache_key, max_age=86400 * 30)
+        if stale_cached and isinstance(stale_cached.get("items"), list) and stale_cached["items"]:
+            logger.warning("日线接口不可用，使用最近缓存 [%s]", code)
+            return list(stale_cached["items"])
+        raise
     if df is None or df.empty:
+        stale_cached = _read_cache(cache_key, max_age=86400 * 30)
+        if stale_cached and isinstance(stale_cached.get("items"), list) and stale_cached["items"]:
+            logger.warning("日线接口返回空数据，使用最近缓存 [%s]", code)
+            return list(stale_cached["items"])
         _write_cache(cache_key, {"items": []})
         return []
     items = [_normalize_daily_bar(row) for _, row in df.iterrows()]

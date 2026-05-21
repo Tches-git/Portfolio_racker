@@ -17,7 +17,12 @@ def test_events_page_uses_tracking_api_contract():
     assert "fetchEventWorkbench" in page
     assert "selected_event_id" in page
     assert "EventStatusControls" in workbench
-    assert "redirect(`/events?view=events&selected_event_id=" in detail_page
+    assert "fetchEventDetail" in detail_page
+    assert "fetchMarketWorkbench" in detail_page
+    assert "事件详情" in detail_page
+    assert "事件正文" in detail_page
+    assert "来源证据" in detail_page
+    assert "行情快照" in detail_page
     assert "updateEventStatus" in status_controls
     assert "处理闭环" in status_controls
     assert "status_actor" in types
@@ -58,8 +63,13 @@ def test_event_detail_page_and_analyze_action_are_wired():
     briefing_page = (ROOT / "frontend/src/app/briefing/page.tsx").read_text(encoding="utf-8")
     workbench = (ROOT / "frontend/src/components/workbench/event-workbench.tsx").read_text(encoding="utf-8")
 
-    assert "redirect(`/events?view=events&selected_event_id=" in detail_page
+    assert "EventAnalyzeButton" in detail_page
+    assert "返回事件队列定位" in detail_page
+    assert "打开原文" in detail_page
     assert "EventAnalyzeButton" in workbench
+    assert "eventTapeConsole" in workbench
+    assert "eventDetailDock" in workbench
+    assert "新闻式详情" in workbench
     assert "analyzeEvent" in analyze_button
     assert "/api/v1/events/${eventId}/analyze" in api
     assert "view: 'alerts'" in alerts_page

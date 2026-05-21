@@ -29,9 +29,9 @@ export default async function MarketPage({
   }
   return (
     <WorkspaceShell
-      eyebrow="行情展示"
-      title={`${data.stock_name || data.stock_code} 行情`}
-      description="查看选中股票的行情快照、日线趋势和关键交易指标。行情页只读展示，不会创建组合或写入事件历史。"
+      eyebrow="Market Quote Terminal"
+      title={`${data.stock_name || data.stock_code} 行情终端`}
+      description="查看选中股票的报价快照、日线趋势和关键交易指标。行情页只读展示，不会创建组合或写入事件历史。"
       actions={data.actions}
     >
       <MarketWorkbench data={data} />

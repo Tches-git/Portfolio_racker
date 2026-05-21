@@ -50,6 +50,49 @@ def create_user_watchlist(db: Session, *, user_id: str, name: str, stock_codes: 
     return _watchlist_from_record(record)
 
 
+def update_user_watchlist(
+    db: Session,
+    *,
+    user_id: str,
+    watchlist_id: str,
+    name: str | None = None,
+    stock_codes: list[str] | None = None,
+    description: str | None = None,
+) -> Watchlist | None:
+    record = db.scalar(
+        select(WatchlistRecord)
+        .where(WatchlistRecord.user_id == user_id, WatchlistRecord.id == watchlist_id)
+        .options(selectinload(WatchlistRecord.stocks))
+    )
+    if record is None:
+        return None
+    now = datetime.utcnow()
+    if name is not None:
+        record.name = name.strip() or "未命名组合"
+    if description is not None:
+        record.description = description.strip()
+    if stock_codes is not None:
+        codes = normalize_stock_codes(stock_codes)
+        record.stocks = [
+            WatchlistStockRecord(stock_code=code, position=index)
+            for index, code in enumerate(codes)
+        ]
+    record.updated_at = now
+    db.commit()
+    db.refresh(record)
+    record = db.scalar(select(WatchlistRecord).where(WatchlistRecord.id == record.id).options(selectinload(WatchlistRecord.stocks))) or record
+    return _watchlist_from_record(record)
+
+
+def delete_user_watchlist(db: Session, *, user_id: str, watchlist_id: str) -> bool:
+    record = db.scalar(select(WatchlistRecord).where(WatchlistRecord.user_id == user_id, WatchlistRecord.id == watchlist_id))
+    if record is None:
+        return False
+    db.delete(record)
+    db.commit()
+    return True
+
+
 def mark_user_watchlist_refreshed(db: Session, *, user_id: str, watchlist_id: str) -> Watchlist | None:
     record = db.scalar(
         select(WatchlistRecord)
@@ -184,14 +227,16 @@ def get_user_export_artifact(db: Session, *, user_id: str, filename: str) -> Exp
 
 
 def _apply_run_to_record(record: AnalysisRunRecord, run) -> None:
+    defaults = {"multi_agent_trace": {}}
     for field in [
         "stock_code", "status", "created_at", "updated_at", "detail", "last_event", "error",
         "owner", "owner_role", "archived", "retry_of_run_id", "canceled", "latest_report_url",
         "history_url", "recovery_status", "stale_after_restart", "attempts", "max_attempts",
-        "priority", "worker_id", "locked_at", "next_retry_at", "run_metrics", "event_context",
+        "priority", "worker_id", "locked_at", "next_retry_at", "run_metrics", "multi_agent_trace", "event_context",
         "event_report_summary", "exports", "events", "audit_events",
     ]:
-        setattr(record, field, getattr(run, field))
+        value = getattr(run, field, defaults[field]) if field in defaults else getattr(run, field)
+        setattr(record, field, value)
 
 
 def _save_user_run_exports(db: Session, *, user_id: str, run) -> None:

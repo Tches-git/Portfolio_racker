@@ -39,10 +39,13 @@ def test_frontend_detail_routes_include_deeper_product_states():
     stock_workbench = (ROOT / 'frontend/src/components/workbench/stock-workbench.tsx').read_text(encoding='utf-8')
 
     assert 'redirect(`/stocks/${stockCode}?tab=exports`)' in exports_page
-    assert 'redirect(`/stocks/${stockCode}?tab=history`)' in history_page
+    assert 'redirect(`/stocks/${stockCode}?tab=summary`)' in history_page
     assert 'ExportsTab' in stock_workbench
-    assert 'HistoryTab' in stock_workbench
-    assert '点评' in stock_workbench
-    assert '事件复盘' in stock_workbench
-    assert '研究记忆' in stock_workbench
+    assert 'BacktestTab' in stock_workbench
+    assert '事件影响回测' in stock_workbench
+    assert '代表性事件' in stock_workbench
+    assert '交付中心' in stock_workbench
     assert 'sameOriginApiUrl' in stock_workbench
+    assert 'previewExportUrl' in stock_workbench
+    assert '预览' in stock_workbench
+    assert '下载' in stock_workbench

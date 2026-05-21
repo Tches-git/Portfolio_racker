@@ -32,6 +32,19 @@ def test_export_download_returns_file(monkeypatch, tmp_path):
     assert 'attachment; filename="report_600519_demo.html"' in response.headers.get('content-disposition', '')
 
 
+def test_export_preview_returns_inline_file(monkeypatch, tmp_path):
+    export_path = tmp_path / 'report_600519_demo.html'
+    export_path.write_text('<html><body>report</body></html>', encoding='utf-8')
+    monkeypatch.setattr('app.api.server.get_user_export_artifact', lambda db, user_id, filename: SimpleNamespace(path=str(export_path)))
+
+    with authenticated_client() as (client, _user):
+        response = client.get('/api/v1/exports/report_600519_demo.html/preview')
+
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/html')
+    assert 'inline; filename="report_600519_demo.html"' in response.headers.get('content-disposition', '')
+
+
 def test_list_runs_endpoint_returns_items(monkeypatch):
     monkeypatch.setattr('app.api.server.run_manager.list_run_objects', lambda **kwargs: [])
     monkeypatch.setattr('app.api.server.run_manager.list_runs', lambda limit=10, **kwargs: {

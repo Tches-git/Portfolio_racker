@@ -9,7 +9,7 @@ from tests.helpers import authenticated_client
 
 def test_alerts_endpoint_returns_alert_summary(monkeypatch):
     collection = EventCollection(
-        items=[MarketEvent(event_id="e1", stock_code="600519", title="监管问询", impact_level="high", sentiment="negative", impact_scope="risk")],
+        items=[MarketEvent(event_id="e1", stock_code="600519", stock_name="贵州茅台", title="监管问询", impact_level="high", sentiment="negative", impact_scope="risk")],
         total=1,
         high_impact_count=1,
         source_count=1,
@@ -23,6 +23,8 @@ def test_alerts_endpoint_returns_alert_summary(monkeypatch):
     assert payload["high_severity_count"] >= 1
     assert payload["risk_alert_count"] >= 1
     assert payload["manual_review_count"] >= 1
+    assert payload["items"][0]["stock_name"] == "贵州茅台"
+    assert payload["items"][0]["title"].startswith("贵州茅台（600519）")
     assert payload["severity_counts"]["high"] >= 1
     assert payload["alert_type_counts"]["risk_watch"] >= 1
     assert payload["rule_counts"]["high_impact"] >= 1
@@ -66,11 +68,12 @@ def test_alerts_endpoint_filters_by_mode_severity_type_and_rule(monkeypatch):
     monkeypatch.setattr("app.api.server.list_user_events", lambda db, user_id, stock_codes=None, limit=100, **kwargs: collection)
 
     with authenticated_client() as (client, _user):
-        payload = client.get("/api/v1/alerts?mode=history&severity=high&alert_type=manual_review&rule_id=manual_review").json()
+        payload = client.get("/api/v1/alerts?mode=history&stock_codes=600519&severity=high&alert_type=manual_review&rule_id=manual_review").json()
 
     assert payload["total"] == 1
     assert payload["items"][0]["rule_id"] == "manual_review"
     assert payload["items"][0]["severity"] == "high"
+    assert payload["items"][0]["stock_name"] == "贵州茅台"
 
 
 def test_daily_briefing_endpoint_returns_key_events(monkeypatch):

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import app.agent.orchestrator as orch_mod
+from app.agent.multi_agent import MultiAgentRoleTrace, MultiAgentTrace
 from app.models import AblationConfig, AnalysisState, FinancialMetrics, PeerCompany, RiskItem, StockProfile, ToolCallRecord
 
 
@@ -122,6 +123,37 @@ class DummyResearchAgent:
             answer="研究结论",
             total_steps=2,
             plan=[],
+            reflection="反思摘要",
+        )
+
+
+class DummyMultiAgentWorkflow:
+    def __init__(self, on_role_step=None):
+        self.on_role_step = on_role_step or (lambda *args, **kwargs: None)
+
+    def run(self, stock_code, state):
+        self.on_role_step("role_done", "MarketDataAgent completed", {"role_id": "market_data"})
+        trace = MultiAgentTrace(
+            mode="autogen_graphflow",
+            role_count=6,
+            completed_role_count=6,
+            failed_role_count=0,
+            roles=[
+                MultiAgentRoleTrace(
+                    role_id="market_data",
+                    role_name="MarketDataAgent",
+                    status="completed",
+                    summary="研究结论",
+                    tool_call_count=1,
+                    duration_s=0.1,
+                )
+            ],
+        )
+        return orch_mod.AgentResult(
+            answer="研究结论",
+            total_steps=6,
+            trace=trace,
+            plan=[type("Plan", (), {"step_id": "1", "objective": "看财务", "preferred_tool": "MarketDataAgent"})()],
             reflection="反思摘要",
         )
 
@@ -318,34 +350,20 @@ def test_initialize_knowledge_base_emits_ready_event():
     assert "rag_ready" in events
 
 
-def test_run_research_phase_updates_sections_and_events():
+def test_run_research_phase_updates_sections_and_events(monkeypatch):
     orchestrator = orch_mod.AgentOrchestrator()
     orchestrator._tracer = orch_mod.Tracer()
     state = AnalysisState(stock_code="600519")
     events: list[str] = []
     orchestrator.on_step = lambda event, detail, state_obj: events.append(event)
-    monkey_result = orch_mod.AgentResult(
-        answer="研究结论",
-        total_steps=3,
-        plan=[type("Plan", (), {"step_id": "1", "objective": "看财务", "preferred_tool": "fetch_financials"})()],
-        reflection="反思摘要",
-    )
-
-    class DummyPhaseAgent:
-        def __init__(self, role="research", on_step=None):
-            self.on_step = on_step or (lambda *args, **kwargs: None)
-
-        def run(self, task, state_obj):
-            self.on_step("action", "调用工具: fetch_financials", {"tool": "fetch_financials"})
-            return monkey_result
-
-    orch_mod.ReActAgent = DummyPhaseAgent
+    monkeypatch.setattr(orch_mod, "AutoGenMultiAgentWorkflow", DummyMultiAgentWorkflow)
     orchestrator._run_research_phase("600519", state)
 
     assert state.analysis_payload["research_conclusion"] == "研究结论"
     assert "看财务" in state.analysis_payload["research_plan"]
     assert state.analysis_payload["research_reflection"] == "反思摘要"
     assert state.sections["research_conclusion"] == "研究结论"
+    assert state.run_payload["multi_agent_trace"]["role_count"] == 6
     assert "research_start" in events
     assert "research_done" in events
 
@@ -398,6 +416,50 @@ def test_run_writer_phase_writes_report_and_emits_done(monkeypatch):
 
     assert state.final_report == "# 最终报告"
     assert "writer_start" in events
+    assert "writer_done" in events
+
+
+def test_run_writer_phase_falls_back_when_llm_fails(monkeypatch):
+    orchestrator = orch_mod.AgentOrchestrator()
+    orchestrator._tracer = orch_mod.Tracer()
+    state = AnalysisState(stock_code="600519", stock_name="测试公司")
+    state.analysis_payload["multi_agent_role_outputs"] = {"planner": "已完成规划", "report_writer": "已形成 brief"}
+    kb = DummyKB()
+    graph_summary = type("Summary", (), {"summary": "图摘要", "relationship_coverage": 0.5, "risk_path_completeness": 0.6})()
+    events: list[str] = []
+    orchestrator.on_step = lambda event, detail, state_obj: events.append(event)
+
+    monkeypatch.setattr(orchestrator, "_write_report_with_rag", lambda state_obj, kb_obj, prev_record=None: (_ for _ in ()).throw(RuntimeError("LLM timeout")))
+    monkeypatch.setattr(orch_mod, "post_process_report", lambda orch, report, state_obj: report)
+    monkeypatch.setattr(orchestrator, "_build_section_graph_query_refinements", lambda state_obj: {"risk": "", "industry": "", "valuation": ""})
+
+    orchestrator._run_writer_phase(state, kb, None, graph_summary, {"risk": "r", "industry": "i", "valuation": "v"}, {"risk": "", "industry": "", "valuation": ""})
+
+    assert "多智能体降级研报" in state.final_report
+    assert "LLM timeout" in state.sections["writer_fallback_error"]
+    assert "writer_fallback" in events
+    assert "writer_done" in events
+
+
+def test_run_writer_phase_falls_back_when_writer_timeout(monkeypatch):
+    orchestrator = orch_mod.AgentOrchestrator()
+    orchestrator._tracer = orch_mod.Tracer()
+    state = AnalysisState(stock_code="600519", stock_name="测试公司")
+    kb = DummyKB()
+    graph_summary = type("Summary", (), {"summary": "图摘要", "relationship_coverage": 0.5, "risk_path_completeness": 0.6})()
+    events: list[str] = []
+    orchestrator.on_step = lambda event, detail, state_obj: events.append(event)
+
+    monkeypatch.setattr(orch_mod, "WRITER_PHASE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(orchestrator, "_write_report_with_rag", lambda state_obj, kb_obj, prev_record=None: __import__("time").sleep(1))
+    monkeypatch.setattr(orch_mod, "post_process_report", lambda orch, report, state_obj: report)
+    monkeypatch.setattr(orchestrator, "_build_section_graph_query_refinements", lambda state_obj: {"risk": "", "industry": "", "valuation": ""})
+
+    orchestrator._run_writer_phase(state, kb, None, graph_summary, {"risk": "r", "industry": "i", "valuation": "v"}, {"risk": "", "industry": "", "valuation": ""})
+
+    assert "多智能体降级研报" in state.final_report
+    assert "Report Agent 写作阶段超过" in state.sections["writer_fallback_error"]
+    assert "writer_fallback" in events
     assert "writer_done" in events
 
 
@@ -793,7 +855,7 @@ def test_finalize_run_updates_memory_sections(monkeypatch):
 def test_run_traced_collects_sections(monkeypatch):
     monkeypatch.setattr(orch_mod, "get_memory_store", lambda: DummyMemoryStore())
     monkeypatch.setattr(orch_mod, "get_knowledge_base", lambda: DummyKB())
-    monkeypatch.setattr(orch_mod, "ReActAgent", DummyResearchAgent)
+    monkeypatch.setattr(orch_mod, "AutoGenMultiAgentWorkflow", DummyMultiAgentWorkflow)
     monkeypatch.setattr(orch_mod.AgentOrchestrator, "_prefetch_data", lambda self, state: state.tool_memory.append(ToolCallRecord(tool_name="fetch_stock_profile", observation="ok")))
     monkeypatch.setattr(orch_mod.AgentOrchestrator, "_enrich_knowledge", lambda self, state, kb: None)
     monkeypatch.setattr(orch_mod.AgentOrchestrator, "_write_report_with_rag", lambda self, state, kb, prev_record=None: "# 研报")
@@ -808,6 +870,7 @@ def test_run_traced_collects_sections(monkeypatch):
     assert state.final_report.startswith("# 测试公司（600519）深度研究报告")
     assert state.sections["research_conclusion"] == "研究结论"
     assert state.sections["research_reflection"] == "反思摘要"
+    assert state.run_payload["multi_agent_trace"]["completed_role_count"] == 6
     assert state.sections["stock_memory_summary"] == "长期记忆摘要"
     assert state.sections["memory_hit_count"] == "1"
     assert state.sections["memory_conflict_count"] == "1"

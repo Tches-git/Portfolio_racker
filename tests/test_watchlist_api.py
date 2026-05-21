@@ -37,6 +37,52 @@ def test_create_watchlist_endpoint_dedupes_codes(monkeypatch):
     assert payload["stock_codes"] == ["600519", "000858"]
 
 
+def test_update_watchlist_endpoint_replaces_profile_and_stock_pool(monkeypatch):
+    captured = {}
+
+    def fake_update(db, user_id, watchlist_id, name=None, stock_codes=None, description=None):
+        captured.update({
+            "watchlist_id": watchlist_id,
+            "name": name,
+            "stock_codes": stock_codes,
+            "description": description,
+        })
+        return Watchlist(watchlist_id=watchlist_id, name=name or "组合", stock_codes=["600519", "000858"], description=description or "")
+
+    monkeypatch.setattr("app.api.server.update_user_watchlist", fake_update)
+
+    with authenticated_client() as (client, _user):
+        response = client.patch(
+            "/api/v1/watchlists/wl1",
+            json={"name": "核心池", "stock_codes": ["600519", "600519", "000858"], "description": "更新后"},
+        )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert captured["watchlist_id"] == "wl1"
+    assert captured["stock_codes"] == ["600519", "600519", "000858"]
+    assert payload["name"] == "核心池"
+    assert payload["stock_codes"] == ["600519", "000858"]
+
+
+def test_delete_watchlist_endpoint_removes_owned_watchlist(monkeypatch):
+    captured = {}
+
+    def fake_delete(db, user_id, watchlist_id):
+        captured["watchlist_id"] = watchlist_id
+        return watchlist_id == "wl1"
+
+    monkeypatch.setattr("app.api.server.delete_user_watchlist", fake_delete)
+
+    with authenticated_client() as (client, _user):
+        response = client.delete("/api/v1/watchlists/wl1")
+        missing = client.delete("/api/v1/watchlists/missing")
+
+    assert response.status_code == 204
+    assert captured["watchlist_id"] == "missing"
+    assert missing.status_code == 404
+
+
 def test_watchlist_detail_endpoint_returns_portfolio_context(monkeypatch):
     watchlist = Watchlist(
         watchlist_id="wl1",

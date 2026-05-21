@@ -23,12 +23,39 @@ export type AuthRegisterRequest = {
   password: string
 }
 
+export type ChartDatum = {
+  label: string
+  value: number
+  tone?: 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'agent'
+}
+
+export type RiskRadarPoint = {
+  label: string
+  value: number
+}
+
+export type AgentFlowNode = {
+  id: string
+  label: string
+  status: string
+  detail: string
+  metric: string
+}
+
+export type CommandCenterMetric = {
+  label: string
+  value: string | number
+  hint?: string
+  tone?: 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'agent'
+  href?: string
+}
+
 export type LatestReportResponse = {
   stock: { code: string; name: string; industry: string }
   summary: { rating: string; rating_score: number; conclusion_brief: string }
   valuation: { per_share_value: number; current_price: number; upside: number }
   quality: { source_reference_count: number; placeholder_source_count: number }
-  run_metrics: { duration_s: number; llm_calls: number; tool_calls: number; total_tokens: number; success: boolean }
+  run_metrics: RunMetrics
   exports: Array<{ kind: string; filename: string; path: string; download_url: string }>
   delivery: { available_kinds: string[]; previewable_count: number; downloadable_count: number; latest_export_filename: string; contract_path: string }
   generated_at: string
@@ -38,6 +65,18 @@ export type StockNewsResponse = {
   stock_code: string
   total: number
   items: Array<{ title: string; content: string; time: string; source: string; url: string; channel: string }>
+}
+
+export type StockSearchItem = {
+  code: string
+  name: string
+  match_text: string
+}
+
+export type StockSearchResponse = {
+  query: string
+  items: StockSearchItem[]
+  total: number
 }
 
 export type MarketEvent = {
@@ -131,6 +170,7 @@ export type MarketWorkbenchResponse = {
 export type TrackingAlert = {
   alert_id: string
   stock_code: string
+  stock_name?: string
   event_id: string
   rule_id: string
   rule_name: string
@@ -239,12 +279,30 @@ export type WatchlistSummary = {
   impacted_stocks: WatchlistImpactStock[]
 }
 
+export type WatchlistMarketQuote = MarketQuote
+export type WatchlistMarketTrendPoint = MarketDailyBar
+
+export type WatchlistMarketSnapshot = {
+  stock_code: string
+  stock_name: string
+  quote: WatchlistMarketQuote
+  trend_30d: WatchlistMarketTrendPoint[]
+  trend_90d: WatchlistMarketTrendPoint[]
+  trend_180d: WatchlistMarketTrendPoint[]
+  source_status: string
+  fallback_message: string
+  suggestion: string
+}
+
 export type WatchlistDetailResponse = {
   watchlist: Watchlist
   events: MarketEventListResponse
   alerts: TrackingAlertListResponse
   briefing: DailyBriefingResponse
   summary: WatchlistSummary
+  market_snapshots: WatchlistMarketSnapshot[]
+  market_updated_at: string
+  market_fallback_message: string
 }
 
 export type EventImpactReviewResponse = {
@@ -272,9 +330,45 @@ export type EventImpactReviewResponse = {
   }>
 }
 
+export type EventBacktestResponse = {
+  stock_code: string
+  stock_name: string
+  windows: number[]
+  total_events: number
+  matched_event_count: number
+  fallback_message: string
+  groups: Array<{
+    key: string
+    label: string
+    event_count: number
+    positive_rate: number
+    average_returns: Record<string, number>
+    average_max_drawdown: number
+  }>
+  items: Array<{
+    event_id: string
+    title: string
+    published_at: string
+    event_type: string
+    impact_level: string
+    sentiment: string
+    base_date: string
+    base_close: number
+    returns: Record<string, number>
+    max_drawdown: number
+    volume_change_pct: number
+  }>
+}
+
 export type WatchlistCreateRequest = {
   name: string
   stock_codes: string[]
+  description?: string
+}
+
+export type WatchlistUpdateRequest = {
+  name?: string
+  stock_codes?: string[]
   description?: string
 }
 
@@ -317,9 +411,51 @@ export type StockHistoryResponse = {
   }
 }
 
+export type RunMetrics = {
+  duration_s: number
+  llm_calls: number
+  tool_calls: number
+  total_tokens: number
+  success: boolean
+  citation_coverage_rate: number
+  unsupported_claim_count: number
+  source_reference_count: number
+  retrieval_topk_hit_rate: number
+  rerank_selected_count: number
+  multi_agent_role_count: number
+  multi_agent_completed_count: number
+  multi_agent_failed_count: number
+  citation_audit_coverage_rate: number
+}
+
+export type MultiAgentRoleTrace = {
+  role_id: string
+  role_name: string
+  status: string
+  summary: string
+  tool_call_count: number
+  duration_s: number
+  fallback_used: boolean
+  error: string
+  phase?: string
+  objective?: string
+  allowed_tools?: string[]
+  input_summary?: string
+  quality_checks?: string[]
+}
+
+export type MultiAgentTrace = {
+  mode: string
+  role_count: number
+  completed_role_count: number
+  failed_role_count: number
+  roles: MultiAgentRoleTrace[]
+}
+
 export type AnalysisRunResponse = {
   run_id: string
   stock_code: string
+  stock_name: string
   status: 'queued' | 'running' | 'completed' | 'failed'
   created_at: string
   updated_at: string
@@ -374,7 +510,8 @@ export type AnalysisRunResponse = {
     event_commentary_url: string
   }
   audit_events: Array<{ timestamp: string; actor: string; role: string; action: string; detail: string }>
-  run_metrics: { duration_s: number; llm_calls: number; tool_calls: number; total_tokens: number; success: boolean }
+  run_metrics: RunMetrics
+  multi_agent_trace: MultiAgentTrace
   actions: { can_retry: boolean; can_cancel: boolean; can_assign: boolean; can_archive: boolean; can_change_owner: boolean; can_view_audit: boolean; suggested_next_action: string; product_route: string; history_route: string; exports_route: string }
   observability: { event_count: number; artifact_count: number; has_error: boolean; latest_signal: string; owner_label: string; archive_label: string; retry_lineage: string; recovery_status: string; stale_after_restart: boolean; attempts: number; max_attempts: number; worker_id: string; locked_at: string; next_retry_at: string }
 }
@@ -465,12 +602,13 @@ export type EventWorkbenchResponse = {
 export type StockWorkbenchResponse = {
   stock_code: string
   stock_name: string
-  active_tab: 'summary' | 'timeline' | 'history' | 'exports'
+  active_tab: 'summary' | 'timeline' | 'history' | 'exports' | 'backtest'
   is_tracked: boolean
   latest_report: LatestReportResponse | null
   history: StockHistoryResponse | null
   timeline: StockEventTimelineResponse
   impact_review: EventImpactReviewResponse
+  event_backtest: EventBacktestResponse
   related_watchlists: Watchlist[]
   related_runs: AnalysisRunListResponse
   exports: Array<{ kind: string; filename: string; path: string; download_url: string }>
@@ -481,4 +619,27 @@ export type RunWorkbenchResponse = {
   runs: AnalysisRunListResponse
   selected_run: AnalysisRunResponse | null
   actions: WorkbenchAction[]
+}
+
+export type QualityWorkbenchResponse = {
+  generated_at: string
+  test_count: number
+  tracking_eval: Record<string, unknown>
+  agent_eval: Record<string, unknown>
+  financial_qa_eval: Record<string, unknown>
+  rag_eval: Record<string, unknown>
+  run_metrics: {
+    ops_status: string
+    total_runs: number
+    active_runs: number
+    failed_runs: number
+    failure_rate: number
+    avg_duration_s: number
+    p95_duration_s: number
+    alert_count: number
+    alerts: string[]
+    recent_events: Array<Record<string, string>>
+  }
+  smoke_status: string
+  metrics: Array<{ label: string; value: string; hint: string }>
 }

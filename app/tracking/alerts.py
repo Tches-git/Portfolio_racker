@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from functools import lru_cache
 from hashlib import md5
 from typing import Callable
 
@@ -102,7 +103,7 @@ def build_tracking_alerts(collection: EventCollection, *, limit: int = 20) -> li
             alerts.append(_alert(
                 event,
                 rule=rule,
-                title=title_template.format(stock_code=event.stock_code),
+                title=title_template.format(stock_code=_stock_label(event)),
                 message=_alert_message(event, rule),
                 suggested_action=suggested_action,
             ))
@@ -116,9 +117,11 @@ def list_alert_rules() -> list[AlertRule]:
 def _alert(event: MarketEvent, *, rule: AlertRule, title: str, message: str, suggested_action: str) -> TrackingAlert:
     raw = f"{event.event_id}:{rule.rule_id}:{rule.severity}"
     alert_id = md5(raw.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    stock_name = _stock_name(event)
     alert = TrackingAlert(
         alert_id=alert_id,
         stock_code=event.stock_code,
+        stock_name=stock_name,
         event_id=event.event_id,
         rule_id=rule.rule_id,
         rule_name=rule.name,
@@ -138,6 +141,36 @@ def _alert(event: MarketEvent, *, rule: AlertRule, title: str, message: str, sug
         alert.handled_by = event.status_actor
         alert.handling_note = event.status_note
     return alert
+
+
+def _stock_label(event: MarketEvent) -> str:
+    code = str(event.stock_code or "").strip()
+    name = _stock_name(event)
+    if name and code and name != code:
+        return f"{name}（{code}）"
+    return name or code
+
+
+def _stock_name(event: MarketEvent) -> str:
+    name = str(event.stock_name or "").strip()
+    if name:
+        return name
+    return _lookup_stock_name(str(event.stock_code or "").strip())
+
+
+@lru_cache(maxsize=512)
+def _lookup_stock_name(stock_code: str) -> str:
+    if not stock_code:
+        return ""
+    try:
+        from app.data_source.akshare_client import search_a_stocks
+
+        for item in search_a_stocks(stock_code, limit=8):
+            if item.get("code") == stock_code:
+                return str(item.get("name") or "").strip()
+    except Exception:
+        return ""
+    return ""
 
 
 def _severity_for_event(rule: AlertRule, event: MarketEvent) -> str:

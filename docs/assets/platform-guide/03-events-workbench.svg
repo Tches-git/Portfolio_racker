@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="事件预警处理台示意图">
+  <rect width="1280" height="720" fill="#05080d"/>
+  <rect x="44" y="42" width="1192" height="84" fill="#07111b" stroke="#26374a"/>
+  <text x="76" y="82" fill="#f8fafc" font-size="26" font-family="Arial, sans-serif" font-weight="800">事件预警台</text>
+  <text x="76" y="110" fill="#8fa0b7" font-size="15" font-family="Arial, sans-serif">左侧处理事件流，右侧查看详情、来源证据和处理动作。</text>
+  <rect x="44" y="160" width="760" height="462" fill="#07111b" stroke="#26374a"/>
+  <text x="76" y="202" fill="#f6b73c" font-size="13" font-family="Arial, sans-serif" font-weight="700">EVENT TAPE</text>
+  <line x1="76" y1="236" x2="760" y2="236" stroke="#203148"/>
+  <text x="90" y="278" fill="#8fa0b7" font-size="13" font-family="Arial, sans-serif">时间</text>
+  <text x="190" y="278" fill="#8fa0b7" font-size="13" font-family="Arial, sans-serif">类型</text>
+  <text x="310" y="278" fill="#8fa0b7" font-size="13" font-family="Arial, sans-serif">事件摘要</text>
+  <text x="690" y="278" fill="#8fa0b7" font-size="13" font-family="Arial, sans-serif">影响</text>
+  <line x1="76" y1="300" x2="760" y2="300" stroke="#182638"/>
+  <text x="90" y="340" fill="#9fb0c6" font-size="14" font-family="Arial, sans-serif">09:30</text>
+  <text x="190" y="340" fill="#9fb0c6" font-size="14" font-family="Arial, sans-serif">公告</text>
+  <text x="310" y="340" fill="#edf4ff" font-size="16" font-family="Arial, sans-serif" font-weight="700">公司披露重要公告，需复核影响范围</text>
+  <rect x="682" y="318" width="52" height="28" rx="14" fill="#16120a" stroke="#f6b73c"/>
+  <text x="700" y="337" fill="#facc15" font-size="13" font-family="Arial, sans-serif">中</text>
+  <line x1="76" y1="372" x2="760" y2="372" stroke="#182638"/>
+  <text x="90" y="412" fill="#9fb0c6" font-size="14" font-family="Arial, sans-serif">10:15</text>
+  <text x="190" y="412" fill="#9fb0c6" font-size="14" font-family="Arial, sans-serif">行情</text>
+  <text x="310" y="412" fill="#edf4ff" font-size="16" font-family="Arial, sans-serif" font-weight="700">实时行情异动，触发风险解释</text>
+  <rect x="682" y="390" width="52" height="28" rx="14" fill="#16120a" stroke="#f6b73c"/>
+  <text x="700" y="409" fill="#facc15" font-size="13" font-family="Arial, sans-serif">中</text>
+  <rect x="842" y="160" width="394" height="462" fill="#080d13" stroke="#26374a"/>
+  <text x="874" y="202" fill="#f6b73c" font-size="13" font-family="Arial, sans-serif" font-weight="700">事件详情</text>
+  <text x="874" y="246" fill="#edf4ff" font-size="20" font-family="Arial, sans-serif" font-weight="800">像新闻一样查看事件</text>
+  <text x="874" y="286" fill="#9fb0c6" font-size="14" font-family="Arial, sans-serif">摘要、正文、来源、影响判断、相关股票和处理动作集中展示。</text>
+  <rect x="874" y="330" width="136" height="36" rx="3" fill="#f6b73c"/>
+  <text x="906" y="353" fill="#05080d" font-size="14" font-family="Arial, sans-serif" font-weight="800">查看详情</text>
+  <rect x="1022" y="330" width="136" height="36" rx="3" fill="#0b1118" stroke="#2b3a4d"/>
+  <text x="1050" y="353" fill="#dbe7f6" font-size="14" font-family="Arial, sans-serif" font-weight="700">生成点评</text>
+</svg>

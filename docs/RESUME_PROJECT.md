@@ -6,10 +6,10 @@
 
 ## 版本一：详细版（适合项目经历重点展示）
 
-**金融研报智能分析系统** | Python, GLM-5.1, FAISS, FastAPI, Next.js | 个人项目
+**金融研报智能分析系统** | Python, AutoGen, GLM/GPT-compatible API, FAISS, FastAPI, Next.js | 个人项目
 
-- 设计并实现基于 **ReAct Agent + RAG** 的 A 股研报自动生成系统，输入股票代码后自动完成数据采集、财务分析、估值建模和报告撰写，输出结构化 Markdown 深度研报
-- 自研 **ReAct Agent 推理引擎**，实现“规划-执行-反思”三阶段闭环，集成 11 个金融分析工具，支持 Function Calling 与文本 ReAct 双模式自动降级；反思阶段可识别缺失项并触发补充研究
+- 设计并实现基于 **AutoGen 多角色 Agent 工作流 + RAG** 的 A 股研报自动生成系统，输入股票代码后自动完成数据采集、财务分析、估值建模和报告撰写，输出结构化 Markdown 深度研报
+- 将研报生成拆分为 Planner、Market Analyst、Event Analyst、Risk Reviewer、Report Writer、Citation Auditor 等角色，固定工作流顺序并记录多智能体 Trace，提升复杂投研任务的可控性与可追踪性
 - 构建 **FAISS 知识检索链路**（2048 维向量 + 语义分块 + LLM 重排序），支持 PDF/TXT 增量入库、实时分析结果回灌和写作期多轮主题检索，形成知识反馈闭环
 - 实现 **NumPy 向量化蒙特卡洛 DCF**（1000 次模拟）与敏感性分析，结合杜邦分析、可比估值、趋势分析、风险识别和量化评分，形成完整金融分析工具链
 - 设计 **规则评分 + LLM-as-Judge** 的双层评测框架，并补充事实一致性检查与自动化基线/消融实验，输出质量、耗时、Token、成功率、工具调用数，以及**风险证据/传导、估值锚覆盖率、自动修补次数、一致性问题数**等结构化指标
@@ -19,9 +19,9 @@
 
 ## 版本二：精简版（适合一般项目经历条目）
 
-**金融研报智能分析系统** | Python, GLM-5.1, FAISS, FastAPI, Next.js | 个人项目
+**金融研报智能分析系统** | Python, AutoGen, FAISS, FastAPI, Next.js | 个人项目
 
-- 基于 **ReAct Agent + RAG** 架构实现 A 股研报自动生成系统，自研三阶段 Agent 推理闭环，集成 11 个金融分析工具，支持 Function Calling 与文本模式双路降级
+- 基于 **AutoGen 多角色 Agent + RAG** 架构实现 A 股研报自动生成系统，拆分规划、数据分析、事件分析、风险复核、报告写作和引用审计等阶段
 - 构建 FAISS 语义检索系统（2048 维向量 + LLM 重排序），实现 PDF/TXT 增量入库、分析结果回灌和写作期多轮检索
 - 实现 NumPy 全向量化蒙特卡洛 DCF（1000 次模拟）、杜邦分析、可比估值、趋势分析与风险识别，形成完整量化分析链路
 - 设计双层评测框架、事实一致性诊断与自动化消融脚本，输出质量/耗时/Token/成功率及风险证据/估值锚/自动修补/一致性问题等指标；工程层面实现缓存、熔断器、配置校验、Span Trace、报告后处理可靠性层与可视化运行指标面板
@@ -32,7 +32,7 @@
 
 **金融研报智能分析系统** | Python, GLM-5.1, FAISS, FastAPI, Next.js | 个人项目
 
-- 基于 ReAct Agent + RAG 架构实现 A 股研报自动生成，集成 11 个金融工具，支持 Function Calling / 文本模式双路降级
+- 基于 AutoGen 多角色 Agent + RAG 架构实现 A 股研报自动生成，集成金融工具链、任务 Trace 和引用审计
 - 构建 FAISS 检索 + LLM 重排序 + 知识回灌闭环；实现全向量化蒙特卡洛 DCF、杜邦分析、风险识别等量化模块
 - 设计规则 + LLM 双层评测、事实一致性诊断与自动化消融实验，补充风险证据/估值锚/自动修补/数据降级披露等可靠性指标，以及运行指标、缓存、熔断器、配置校验和可视化追踪能力
 
@@ -59,6 +59,6 @@
 
 ## 技术关键词（供简历技能栏 / ATS 匹配）
 
-`LLM Agent` `ReAct` `RAG` `FAISS` `Prompt Engineering` `Function Calling`
+`LLM Agent` `AutoGen` `Multi-Agent Workflow` `RAG` `FAISS` `Prompt Engineering` `Function Calling`
 `Monte Carlo Simulation` `DCF Valuation` `DuPont Analysis` `NumPy`
 `FastAPI` `Next.js` `Circuit Breaker` `Thread Safety` `Ablation Study` `LLM-as-Judge`

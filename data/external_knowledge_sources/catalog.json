@@ -1,0 +1,272 @@
+[
+  {
+    "id": "ai4finance-fingpt",
+    "name": "FinGPT",
+    "category": "financial_llm_data_pipeline",
+    "market": "global",
+    "language": ["en", "zh"],
+    "license": "MIT",
+    "source_type": "github_project",
+    "repository_url": "https://github.com/AI4Finance-Foundation/FinGPT",
+    "source_url": "https://github.com/AI4Finance-Foundation/FinGPT",
+    "doc_types": ["financial_llm", "dataset_pipeline", "benchmark", "sentiment", "forecasting"],
+    "ingestion_mode": "catalog_summary",
+    "enterprise_value": "提供金融大模型、数据流水线、金融任务数据和 benchmark 设计参考，适合为研报平台补充金融 NLP / Agent 评测方法。",
+    "use_cases": [
+      "金融 NLP 任务模板",
+      "金融情绪分析和事件解释",
+      "金融大模型 benchmark 设计",
+      "研报平台的数据流水线参考"
+    ],
+    "limitations": [
+      "不是现成 A 股企业知识库",
+      "部分数据位于 Hugging Face 或外部链接，需逐项确认许可证和再分发权限",
+      "更适合作为数据管线和评测来源，而不是直接作为事实型研报知识库"
+    ],
+    "citation": "AI4Finance Foundation. FinGPT: Open-Source Financial Large Language Models.",
+    "tags": ["FinGPT", "financial LLM", "benchmark", "sentiment", "forecasting", "金融大模型"]
+  },
+  {
+    "id": "ai4finance-finrobot",
+    "name": "FinRobot",
+    "category": "financial_agent_framework",
+    "market": "global",
+    "language": ["en"],
+    "license": "Apache-2.0",
+    "source_type": "github_project",
+    "repository_url": "https://github.com/AI4Finance-Foundation/FinRobot",
+    "source_url": "https://github.com/AI4Finance-Foundation/FinRobot",
+    "doc_types": ["agent_framework", "financial_analysis_workflow", "report_generation"],
+    "ingestion_mode": "catalog_summary",
+    "enterprise_value": "提供金融分析 Agent 平台参考，适合对照本项目的多 Agent 角色分工、研报生成流程和工具编排方式。",
+    "use_cases": [
+      "多 Agent 研报流程参考",
+      "金融分析角色拆分",
+      "报告生成链路设计",
+      "Agent 工具调用和 Trace 展示参考"
+    ],
+    "limitations": [
+      "主要是框架和示例，不是大型知识库",
+      "接入时应复用流程思想，不应直接替换现有 AutoGen 工作流",
+      "需要结合本项目 A 股数据源和权限隔离重新实现"
+    ],
+    "citation": "AI4Finance Foundation. FinRobot: An Open-Source AI Agent Platform for Financial Analysis using LLMs.",
+    "tags": ["FinRobot", "financial agent", "multi-agent", "report generation", "研报生成"]
+  },
+  {
+    "id": "dgunning-edgartools",
+    "name": "edgartools",
+    "category": "sec_filings_connector",
+    "market": "us",
+    "language": ["en"],
+    "license": "MIT",
+    "source_type": "python_library",
+    "repository_url": "https://github.com/dgunning/edgartools",
+    "source_url": "https://github.com/dgunning/edgartools",
+    "doc_types": ["10-k", "10-q", "8-k", "xbrl", "13f", "sec_filings"],
+    "ingestion_mode": "connector_candidate",
+    "enterprise_value": "可作为企业级美股 RAG 知识库的数据连接器，抓取 SEC EDGAR filings、XBRL 财务表、10-K、10-Q、8-K 和机构持仓等结构化材料。",
+    "use_cases": [
+      "美股公司财报 RAG 入库",
+      "XBRL 财务指标抽取",
+      "SEC 事件和公告检索",
+      "公共金融 QA benchmark 证据源构建"
+    ],
+    "limitations": [
+      "只覆盖 SEC / 美股披露体系，不覆盖 A 股巨潮和交易所公告",
+      "大规模抓取需要遵守 SEC 访问频率与 User-Agent 要求",
+      "中文研报生成需要翻译、术语映射和市场口径转换"
+    ],
+    "citation": "edgartools. Read and analyze SEC EDGAR filings in Python.",
+    "tags": ["SEC", "EDGAR", "10-K", "10-Q", "XBRL", "filings", "RAG 数据源"]
+  },
+  {
+    "id": "tongyi-fin-qwen",
+    "name": "FinQwen",
+    "category": "chinese_financial_qa",
+    "market": "china",
+    "language": ["zh"],
+    "license": "research",
+    "source_type": "github_project",
+    "repository_url": "https://github.com/Tongyi-EconML/FinQwen",
+    "source_url": "https://github.com/Tongyi-EconML/FinQwen",
+    "doc_types": ["chinese_finance_qa", "prospectus", "table_qa", "benchmark"],
+    "ingestion_mode": "manual_license_review",
+    "enterprise_value": "面向中文金融问答和金融场景智能问答，适合补充中文金融 RAG 任务模板、招股书/表格问答场景和本地 benchmark。",
+    "use_cases": [
+      "中文金融问答样本",
+      "招股书和表格问答",
+      "中文 RAG 评测题型设计",
+      "A 股场景提示词和答案结构参考"
+    ],
+    "limitations": [
+      "接入前需要逐项确认数据许可证和可再分发范围",
+      "不应把竞赛或训练数据直接混入生产知识库",
+      "更适合进入 eval 数据集或任务模板，而不是直接作为事实证据"
+    ],
+    "citation": "Tongyi-EconML. FinQwen: 金融场景智能问答系统。",
+    "tags": ["FinQwen", "中文金融", "金融问答", "招股书", "表格问答"]
+  },
+  {
+    "id": "fudandisc-disc-finllm",
+    "name": "DISC-FinLLM",
+    "category": "chinese_financial_instruction_data",
+    "market": "china",
+    "language": ["zh"],
+    "license": "Apache-2.0",
+    "source_type": "github_project",
+    "repository_url": "https://github.com/FudanDISC/DISC-FinLLM",
+    "source_url": "https://github.com/FudanDISC/DISC-FinLLM",
+    "doc_types": ["instruction_data", "retrieval_augmented_instruction", "financial_eval", "tool_use"],
+    "ingestion_mode": "catalog_summary",
+    "enterprise_value": "提供中文金融咨询、金融 NLP、金融计算和检索增强指令数据的设计参考，适合增强本项目 Agent 任务模板和工具调用评测。",
+    "use_cases": [
+      "中文金融 Agent 任务模板扩展",
+      "检索增强指令样本参考",
+      "金融计算工具调用设计",
+      "多专家金融模型任务划分参考"
+    ],
+    "limitations": [
+      "完整训练数据并非全部在仓库中直接开放",
+      "指令数据不等价于事实知识库，不能作为公司公告证据",
+      "生产研报仍应优先引用公告、财报和公开权威数据源"
+    ],
+    "citation": "FudanDISC. DISC-FinLLM: 中文金融大语言模型。",
+    "tags": ["DISC-FinLLM", "中文金融", "检索增强指令", "工具调用", "金融计算"]
+  },
+  {
+    "id": "valuesimplex-finlongeval",
+    "name": "FinLongEval",
+    "category": "long_document_benchmark",
+    "market": "china",
+    "language": ["zh"],
+    "license": "research",
+    "source_type": "github_project",
+    "repository_url": "https://github.com/valuesimplex/FinLongEval",
+    "source_url": "https://github.com/valuesimplex/FinLongEval",
+    "doc_types": ["long_context_eval", "financial_documents", "qa_benchmark"],
+    "ingestion_mode": "manual_license_review",
+    "enterprise_value": "适合评估金融长文档理解、长上下文检索和研报问答能力，可作为 RAG 长文档评测补充。",
+    "use_cases": [
+      "金融长文档 RAG 评测",
+      "长上下文召回和答案一致性测试",
+      "研报/公告长文本问答样本",
+      "多 Agent 引用覆盖率测试"
+    ],
+    "limitations": [
+      "主要用于评测，不建议直接混入生产知识库",
+      "接入前需要确认数据文件许可证和引用方式",
+      "评测结果不能直接代表真实投研收益"
+    ],
+    "citation": "ValueSimplex. FinLongEval.",
+    "tags": ["FinLongEval", "长文档", "金融评测", "RAG benchmark"]
+  },
+  {
+    "id": "czyssrs-finqa",
+    "name": "FinQA",
+    "category": "financial_numerical_reasoning",
+    "market": "us",
+    "language": ["en"],
+    "license": "research",
+    "source_type": "github_dataset",
+    "repository_url": "https://github.com/czyssrs/FinQA",
+    "source_url": "https://finqasite.github.io/",
+    "doc_types": ["financial_qa", "numerical_reasoning", "table_text_qa", "benchmark"],
+    "ingestion_mode": "eval_dataset",
+    "enterprise_value": "适合测试金融数值推理能力，验证模型能否基于财报表格与文本生成可解释计算步骤。",
+    "use_cases": [
+      "财务表格 + 文本混合推理",
+      "数值计算正确性评测",
+      "Agent 工具调用和计算链路验证",
+      "公共金融 QA benchmark"
+    ],
+    "limitations": [
+      "英文 SEC 财报语境为主，不能直接代表 A 股中文研报场景",
+      "更适合作为评测集，不应作为事实知识直接召回给研报",
+      "使用时需要遵循原项目数据协议和引用要求"
+    ],
+    "citation": "Chen et al. FinQA: A Dataset of Numerical Reasoning over Financial Data.",
+    "tags": ["FinQA", "numerical reasoning", "financial QA", "table QA", "benchmark"]
+  },
+  {
+    "id": "patronus-financebench",
+    "name": "FinanceBench",
+    "category": "open_book_financial_qa",
+    "market": "us",
+    "language": ["en"],
+    "license": "research",
+    "source_type": "benchmark",
+    "repository_url": "https://github.com/patronus-ai/financebench",
+    "source_url": "https://arxiv.org/abs/2311.11944",
+    "doc_types": ["financial_qa", "sec_filings", "open_book_qa", "benchmark"],
+    "ingestion_mode": "eval_dataset",
+    "enterprise_value": "适合评估 RAG 系统能否在真实财务文件中找到证据并回答问题，是金融开放书问答的代表性 benchmark。",
+    "use_cases": [
+      "RAG top-k 命中率评测",
+      "引用覆盖率评测",
+      "答案正确性评测",
+      "SEC 财报证据定位"
+    ],
+    "limitations": [
+      "以英文财务文件和美股公司为主",
+      "用于评测比用于生产知识库更合适",
+      "接入时需要保留原始 sample_id、evidence 和来源文件信息"
+    ],
+    "citation": "Islam et al. FinanceBench: A New Benchmark for Financial Question Answering.",
+    "tags": ["FinanceBench", "open-book QA", "SEC filings", "RAG evaluation", "citation coverage"]
+  },
+  {
+    "id": "finagent-benchmark",
+    "name": "FinAgent Benchmark",
+    "category": "agentic_rag_benchmark",
+    "market": "us",
+    "language": ["en"],
+    "license": "research",
+    "source_type": "huggingface_dataset",
+    "repository_url": "https://huggingface.co/datasets/finagent-benchmark/finagent-benchmark",
+    "source_url": "https://huggingface.co/datasets/finagent-benchmark/finagent-benchmark",
+    "doc_types": ["agentic_rag", "sec_filings", "benchmark", "verified_qa"],
+    "ingestion_mode": "eval_dataset",
+    "enterprise_value": "用于评估 vector RAG、agentic RAG 和 multi-agent 系统在 SEC 文件问答上的证据定位和答案质量。",
+    "use_cases": [
+      "Agentic RAG 评测",
+      "多 Agent 检索与工具调用比较",
+      "SEC 文件问答",
+      "人工验证问题集"
+    ],
+    "limitations": [
+      "样本规模适合 smoke / benchmark，不是完整生产知识库",
+      "英文 SEC 语境需要和 A 股中文数据分层管理",
+      "生产研报不能把 benchmark 答案当作实时事实"
+    ],
+    "citation": "finagent-benchmark. FinAgent Benchmark dataset.",
+    "tags": ["FinAgent", "agentic RAG", "multi-agent", "SEC", "benchmark"]
+  },
+  {
+    "id": "tatqa",
+    "name": "TAT-QA",
+    "category": "table_text_financial_qa",
+    "market": "us",
+    "language": ["en"],
+    "license": "research",
+    "source_type": "benchmark",
+    "repository_url": "https://github.com/NExTplusplus/TAT-QA",
+    "source_url": "https://arxiv.org/abs/2105.07624",
+    "doc_types": ["table_qa", "text_qa", "financial_qa", "benchmark"],
+    "ingestion_mode": "eval_dataset",
+    "enterprise_value": "适合评估模型是否能同时利用财务表格和文本段落进行问答、计算与证据定位。",
+    "use_cases": [
+      "表格 + 文本混合问答",
+      "财报数字推理",
+      "RAG 上下文组织测试",
+      "多 Agent 估值/财务角色评测"
+    ],
+    "limitations": [
+      "主要是英文财务文档评测集",
+      "接入 A 股场景需要中文表格抽取和会计科目映射",
+      "适合作为 eval，不适合作为实时知识源"
+    ],
+    "citation": "Zhu et al. TAT-QA: A Question Answering Benchmark on a Hybrid of Tabular and Textual Content in Finance.",
+    "tags": ["TAT-QA", "table QA", "financial QA", "numerical reasoning", "benchmark"]
+  }
+]

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="组合管理流程示意图">
+  <rect width="1280" height="720" fill="#05080d"/>
+  <rect x="44" y="42" width="1192" height="84" fill="#07111b" stroke="#26374a"/>
+  <text x="76" y="82" fill="#f8fafc" font-size="26" font-family="Arial, sans-serif" font-weight="800">组合监控</text>
+  <text x="76" y="110" fill="#8fa0b7" font-size="15" font-family="Arial, sans-serif">创建、重命名、维护股票池，并手动触发事件刷新。</text>
+  <rect x="44" y="160" width="770" height="410" fill="#07111b" stroke="#26374a"/>
+  <text x="76" y="202" fill="#f6b73c" font-size="13" font-family="Arial, sans-serif" font-weight="700">组合列表</text>
+  <line x1="76" y1="230" x2="780" y2="230" stroke="#203148"/>
+  <text x="88" y="262" fill="#8fa0b7" font-size="13" font-family="Arial, sans-serif">组合</text>
+  <text x="318" y="262" fill="#8fa0b7" font-size="13" font-family="Arial, sans-serif">股票池</text>
+  <text x="566" y="262" fill="#8fa0b7" font-size="13" font-family="Arial, sans-serif">动作</text>
+  <line x1="76" y1="286" x2="780" y2="286" stroke="#182638"/>
+  <text x="88" y="326" fill="#edf4ff" font-size="17" font-family="Arial, sans-serif" font-weight="700">核心持仓</text>
+  <text x="318" y="326" fill="#cbd6e4" font-size="15" font-family="Arial, sans-serif">股票 A  股票 B  股票 C</text>
+  <rect x="560" y="302" width="72" height="30" rx="3" fill="#0b1118" stroke="#2b3a4d"/>
+  <text x="583" y="322" fill="#dbe7f6" font-size="13" font-family="Arial, sans-serif">打开</text>
+  <rect x="646" y="302" width="72" height="30" rx="3" fill="#0b1118" stroke="#2b3a4d"/>
+  <text x="669" y="322" fill="#dbe7f6" font-size="13" font-family="Arial, sans-serif">管理</text>
+  <rect x="852" y="160" width="384" height="410" fill="#080d13" stroke="#26374a"/>
+  <text x="884" y="202" fill="#f6b73c" font-size="13" font-family="Arial, sans-serif" font-weight="700">常用动作</text>
+  <rect x="884" y="236" width="320" height="46" rx="3" fill="#f6b73c"/>
+  <text x="990" y="265" fill="#05080d" font-size="15" font-family="Arial, sans-serif" font-weight="800">刷新主组合</text>
+  <rect x="884" y="304" width="320" height="46" rx="3" fill="#0b1118" stroke="#2b3a4d"/>
+  <text x="990" y="333" fill="#dbe7f6" font-size="15" font-family="Arial, sans-serif" font-weight="700">编辑股票池</text>
+  <rect x="884" y="372" width="320" height="46" rx="3" fill="#0b1118" stroke="#2b3a4d"/>
+  <text x="990" y="401" fill="#dbe7f6" font-size="15" font-family="Arial, sans-serif" font-weight="700">进入事件预警台</text>
+  <text x="884" y="474" fill="#8fa0b7" font-size="14" font-family="Arial, sans-serif">刷新后才会在当前账号下沉淀事件、预警和研报任务。</text>
+</svg>

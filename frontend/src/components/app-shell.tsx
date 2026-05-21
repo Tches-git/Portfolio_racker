@@ -1,24 +1,18 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import { Suspense, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 import type { AuthUser } from '../lib/types'
-import { SidebarNav } from './sidebar-nav'
+import { AutoRefreshControl } from './auto-refresh-control'
 import { UserMenu } from './user-menu'
-
-const TOP_LINKS = [
-  { label: '驾驶舱', href: '/' },
-  { label: '组合', href: '/watchlist' },
-  { label: '事件预警', href: '/events' },
-  { label: '行情', href: '/markets' },
-  { label: '任务交付', href: '/runs' },
-]
+import { ContextSidebar } from './workbench/context-sidebar'
 
 export function AppShell({ children, user, runCenter }: { children: ReactNode; user: AuthUser | null; runCenter?: ReactNode }) {
   const pathname = usePathname()
   const isAuthRoute = pathname === '/login' || pathname === '/register'
+  const showRunCenter = Boolean(runCenter) && false
 
   if (isAuthRoute) {
     return <>{children}</>
@@ -27,43 +21,33 @@ export function AppShell({ children, user, runCenter }: { children: ReactNode; u
   return (
     <div className="appFrame">
       <aside className="sidebar">
-        <div>
-          <Link className="brandLockup" href="/">
-            <div className="brandMark">研</div>
-            <div>
-              <div className="brandTitle">研究中枢</div>
-              <div className="brandSub">金融消息追踪平台</div>
-            </div>
-          </Link>
-        </div>
-
-        <SidebarNav />
-
-        <div className="sidebarCard">
-          <div className="sidebarCardTitle">工作区</div>
-          <div className="sidebarCardText">多用户工作区 · 当前账号独立数据空间，事件历史、预警处理、研报交付在同一工作台内闭环。</div>
-        </div>
+        <Link className="brandLockup" href="/">
+          <div className="brandMark">FT</div>
+          <div>
+            <div className="brandTitle">金融研究终端</div>
+            <div className="brandSub">多智能体金融研究终端</div>
+          </div>
+        </Link>
+        <Suspense fallback={<div className="contextRail" />}>
+          <ContextSidebar />
+        </Suspense>
       </aside>
 
       <div className="contentArea">
         <header className="topbar">
           <Link className="topbarProduct" href="/">
-            <span className="vercelTriangle" aria-hidden />
-            <span>组合风险驾驶舱</span>
+            <span className="topbarProductMark" aria-hidden />
+            <span>金融研究指挥中心</span>
           </Link>
-          <nav className="topbarNav" aria-label="Global navigation">
-            {TOP_LINKS.map((item) => {
-              const active = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
-              return (
-                <Link className={`topbarLink${active ? ' topbarLinkActive' : ''}`} href={item.href} key={item.href}>
-                  {item.label}
-                </Link>
-              )
-            })}
-          </nav>
+          <div className="topbarStatusCluster" aria-label="系统状态">
+            <span><i className="liveDot" aria-hidden /> 实时采集</span>
+            <span>用户隔离</span>
+            <span>Agent Trace</span>
+            <span>{pathname === '/' ? '驾驶舱' : pathname.startsWith('/runs') ? 'Agent 任务' : pathname.startsWith('/events') ? '事件预警' : pathname.startsWith('/watchlist') ? '组合监控' : '研究工作台'}</span>
+          </div>
           <div className="topbarActions">
+            <AutoRefreshControl />
             <Link className="topbarCommand" href="/watchlist">新建组合</Link>
-            <span className="topbarMeta"><span className="liveDot" aria-hidden /> 当前账号独立数据</span>
             {user ? <UserMenu user={user} /> : (
               <div className="authLinks">
                 <Link className="topbarCommand" href="/login">登录</Link>
@@ -72,7 +56,7 @@ export function AppShell({ children, user, runCenter }: { children: ReactNode; u
             )}
           </div>
         </header>
-        {runCenter}
+        {showRunCenter ? runCenter : null}
         {children}
       </div>
     </div>

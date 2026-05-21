@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
 import { updateEventStatus } from '../lib/api'
+import { formatEventStatus } from '../lib/labels'
 import type { MarketEvent } from '../lib/types'
 
 const STATUS_LABELS: Record<MarketEvent['status'], string> = {
@@ -15,7 +16,7 @@ const STATUS_LABELS: Record<MarketEvent['status'], string> = {
 
 export function EventStatusBadge({ status }: { status: MarketEvent['status'] }) {
   const tone = status === 'ignored' ? 'tagNegative' : status === 'new' ? '' : 'tagPositive'
-  return <span className={`tag ${tone}`}>{STATUS_LABELS[status] || status}</span>
+  return <span className={`tag ${tone}`}>{STATUS_LABELS[status] || formatEventStatus(status)}</span>
 }
 
 export function EventStatusControls({
@@ -61,7 +62,7 @@ export function EventStatusControls({
       </div>
       {status !== 'new' || statusUpdatedAt || statusNote ? (
         <div className="selectionHint">
-          处理闭环：{statusActor || 'browser-user'} · {statusUpdatedAt || '时间待同步'}{statusNote ? ` · ${statusNote}` : ''}
+          处理闭环：{statusActor || '当前用户'} · {statusUpdatedAt || '时间待同步'}{statusNote ? ` · ${statusNote}` : ''}
         </div>
       ) : null}
       {error ? <div className="inlineError">{error}</div> : null}

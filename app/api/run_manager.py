@@ -2,21 +2,25 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from threading import Condition, Lock, Thread
+from typing import Iterable
 from uuid import uuid4
 
 from app.api.mappers import build_run_response
 from app.api.schemas import AnalysisRunListResponse, AnalysisRunResponse, RunStockGroupDTO, WorkspaceSnapshotDTO
-from app.memory.store import get_memory_store
+from app.config import OUTPUT_DIR, REDIS_URL
 from app.memory.db_store import UserMemoryStore
-from app.config import OUTPUT_DIR
+from app.memory.store import get_memory_store
 from app.db.session import SessionLocal
 from app.db.repositories import save_user_run
 from app.engine import ReportEngine
+from app.evals.rag_eval import evaluate_rag_citations
 from app.models import AnalysisState
 from app.exports.storage import save_output_files
 
@@ -39,6 +43,7 @@ class AnalysisRun:
     canceled: bool = False
     state: AnalysisState | None = None
     run_metrics: dict[str, float | int | bool] = field(default_factory=dict)
+    multi_agent_trace: dict[str, object] = field(default_factory=dict)
     event_context: dict[str, object] = field(default_factory=dict)
     event_report_summary: dict[str, object] = field(default_factory=dict)
     exports: list[dict[str, str]] = field(default_factory=list)
@@ -67,7 +72,7 @@ class RunActionError(RuntimeError):
 class AnalysisRunManager:
     _LEGACY_PERSIST_PATH = 'api_runs.json'
     _DB_PATH = 'api_runs.db'
-    _SCHEMA_VERSION = 6
+    _SCHEMA_VERSION = 7
 
     def __init__(self, *, output_dir: Path, worker_count: int = 2, auto_start_workers: bool = True) -> None:
         self._output_dir = output_dir
@@ -76,6 +81,7 @@ class AnalysisRunManager:
         self._queue_condition = Condition(self._lock)
         self._worker_count = max(1, worker_count)
         self._workers_started = False
+        self._mark_interrupted_on_load = auto_start_workers
         self._legacy_store_path = output_dir / self._LEGACY_PERSIST_PATH
         self._db_path = output_dir / self._DB_PATH
         self._backup_dir = output_dir / 'api_run_backups'
@@ -99,7 +105,8 @@ class AnalysisRunManager:
         run.audit_events.append(self._audit_payload(actor, role, 'create_run', f'创建 {run.stock_code} 分析任务'))
         with self._queue_condition:
             self._runs[run.run_id] = run
-            self._save_runs()
+            self._save_run(run)
+            self._enqueue_run(run.run_id)
             self._queue_condition.notify()
         return run
 
@@ -128,11 +135,13 @@ class AnalysisRunManager:
         run.audit_events.append(self._audit_payload(actor, role, 'event_analyze', f"事件 {context.get('event_id', '')} 触发分析"))
         with self._queue_condition:
             self._runs[run.run_id] = run
-            self._save_runs()
+            self._save_run(run)
+            self._enqueue_run(run.run_id)
             self._queue_condition.notify()
             return run
 
     def get_run(self, run_id: str) -> AnalysisRun:
+        self.refresh_from_store()
         with self._lock:
             run = self._runs.get(run_id)
         if run is None:
@@ -150,7 +159,7 @@ class AnalysisRunManager:
             run.updated_at = datetime.now().isoformat()
             run.events.append(self._event_payload(run.status, 'run_assigned', f'已分配给 {run.owner}'))
             run.audit_events.append(self._audit_payload(actor, role, 'assign_owner', f'分配给 {run.owner}'))
-            self._save_runs()
+            self._save_run(run)
             return run
 
     def archive_run(self, run_id: str, *, actor: str = 'system', role: str = 'admin') -> AnalysisRun:
@@ -163,7 +172,7 @@ class AnalysisRunManager:
             run.updated_at = datetime.now().isoformat()
             run.events.append(self._event_payload(run.status, 'run_archived', '任务已归档'))
             run.audit_events.append(self._audit_payload(actor, role, 'archive_run', '任务已归档'))
-            self._save_runs()
+            self._save_run(run)
             return run
 
     def cancel_run(self, run_id: str, *, actor: str = 'system', role: str = 'admin') -> AnalysisRun:
@@ -182,7 +191,7 @@ class AnalysisRunManager:
             run.updated_at = datetime.now().isoformat()
             run.events.append(self._event_payload(run.status, run.last_event, run.detail))
             run.audit_events.append(self._audit_payload(actor, role, 'cancel_run', '任务已取消'))
-            self._save_runs()
+            self._save_run(run)
             self._queue_condition.notify_all()
             return run
 
@@ -196,7 +205,7 @@ class AnalysisRunManager:
         else:
             retried = self.start_run(run.stock_code, retry_of_run_id=run.run_id, actor=actor, role=role, user_id=run.user_id)
         retried.audit_events.append(self._audit_payload(actor, role, 'retry_run', f'重试来源 {run.run_id}'))
-        self._save_runs()
+        self._save_run(retried)
         return retried
 
     def start_batch(self, stock_codes: list[str], *, actor: str = 'system', role: str = 'admin', user_id: str = '') -> list[AnalysisRun]:
@@ -222,6 +231,7 @@ class AnalysisRunManager:
             Thread(target=self._worker_loop, args=(f'worker-{index + 1}',), daemon=True).start()
 
     def list_run_objects(self, *, limit: int = 1000, owner: str = '', user_id: str = '') -> list[AnalysisRun]:
+        self.refresh_from_store()
         with self._lock:
             ordered_runs = sorted(self._runs.values(), key=lambda item: item.updated_at or item.created_at, reverse=True)
             if user_id:
@@ -345,6 +355,25 @@ class AnalysisRunManager:
                     continue
             self._execute_run(run.run_id)
 
+    def execute_queued_once(self, worker_id: str = 'external-worker') -> AnalysisRun | None:
+        """供独立 worker 进程调用：刷新共享任务库，领取并执行一个任务。"""
+        self.refresh_from_store(mark_interrupted=False)
+        with self._queue_condition:
+            run = self._claim_next_run(worker_id)
+        if run is None:
+            return None
+        self._execute_run(run.run_id)
+        return self.get_run(run.run_id)
+
+    def run_external_worker(self, *, worker_id: str = 'external-worker', poll_interval: float = 1.0) -> None:
+        """Redis 通知优先、SQLite 轮询兜底的单机 worker 循环。"""
+        print(f'{worker_id} 已启动，等待研报任务')
+        while True:
+            self._wait_for_queue_signal(timeout=max(1, int(poll_interval)))
+            run = self.execute_queued_once(worker_id)
+            if run is None:
+                time.sleep(poll_interval)
+
     def _claim_next_run(self, worker_id: str) -> AnalysisRun | None:
         now = datetime.now().isoformat()
         candidates = [
@@ -362,7 +391,7 @@ class AnalysisRunManager:
         run.detail = f'{worker_id} 已领取任务，启动分析引擎'
         run.last_event = 'run_claimed'
         run.events.append(self._event_payload(run.status, run.last_event, run.detail))
-        self._save_runs()
+        self._save_run(run)
         return run
 
     def _execute_run(self, run_id: str) -> None:
@@ -377,7 +406,16 @@ class AnalysisRunManager:
         def on_step(event: str, detail: str, state: AnalysisState) -> None:
             if self.get_run(run_id).canceled:
                 raise RuntimeError('任务已取消')
-            self._update_run(run_id, status='running', detail=detail, last_event=event)
+            partial_trace = dict(getattr(state, 'run_payload', {}).get('multi_agent_trace', {}) or {})
+            partial_metrics = dict(getattr(state, 'run_metrics', {}) or {})
+            self._update_run(
+                run_id,
+                status='running',
+                detail=detail,
+                last_event=event,
+                run_metrics=partial_metrics or None,
+                multi_agent_trace=partial_trace or None,
+            )
 
         self._update_run(run_id, status='running', detail='分析引擎已启动', last_event='run_started')
         if self.get_run(run_id).canceled:
@@ -425,7 +463,7 @@ class AnalysisRunManager:
                 run.next_retry_at = datetime.now().isoformat()
                 run.events.append(self._event_payload(run.status, run.last_event, run.detail))
                 self._queue_condition.notify()
-            self._save_runs()
+            self._save_run(run)
 
     @staticmethod
     def _export_timestamp(state: AnalysisState) -> str:
@@ -477,12 +515,20 @@ class AnalysisRunManager:
             current.next_retry_at = ''
             current.state = state
             current.run_metrics = dict(getattr(state, 'run_metrics', {}) or {})
+            citation_metrics = evaluate_rag_citations(
+                getattr(state, 'final_report', '') or '',
+                list(getattr(state, 'source_refs', []) or []),
+                stock_code=current.stock_code,
+            )
+            current.run_metrics.update(citation_metrics)
+            current.run_metrics['citation_audit_coverage_rate'] = float(citation_metrics.get('citation_coverage_rate', 0.0) or 0.0)
+            current.multi_agent_trace = dict(getattr(state, 'run_payload', {}).get('multi_agent_trace', {}) or {})
             current.event_report_summary = event_summary
             current.exports = exports
             current.latest_report_url = f'/api/v1/reports/latest/{current.stock_code}'
             current.history_url = f'/api/v1/history/{current.stock_code}'
             current.events.append(self._event_payload(current.status, current.last_event, current.detail))
-            self._save_runs()
+            self._save_run(current)
 
     def _build_event_report_summary(self, run: AnalysisRun, state: AnalysisState) -> dict[str, object]:
         context = dict(run.event_context or {})
@@ -598,7 +644,17 @@ class AnalysisRunManager:
             return self._output_dir / 'users' / run.user_id
         return self._output_dir
 
-    def _update_run(self, run_id: str, *, status: str | None = None, detail: str | None = None, last_event: str | None = None, error: str | None = None) -> None:
+    def _update_run(
+        self,
+        run_id: str,
+        *,
+        status: str | None = None,
+        detail: str | None = None,
+        last_event: str | None = None,
+        error: str | None = None,
+        run_metrics: dict[str, object] | None = None,
+        multi_agent_trace: dict[str, object] | None = None,
+    ) -> None:
         with self._lock:
             run = self._runs[run_id]
             if status is not None:
@@ -609,10 +665,14 @@ class AnalysisRunManager:
                 run.last_event = last_event
             if error is not None:
                 run.error = error
+            if run_metrics is not None:
+                run.run_metrics = dict(run_metrics)
+            if multi_agent_trace is not None:
+                run.multi_agent_trace = dict(multi_agent_trace)
             run.updated_at = datetime.now().isoformat()
             if detail is not None or last_event is not None or status is not None:
                 run.events.append(self._event_payload(run.status, run.last_event, run.detail))
-            self._save_runs()
+            self._save_run(run)
 
     def _initialize_store(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -649,6 +709,7 @@ class AnalysisRunManager:
                     locked_at TEXT NOT NULL DEFAULT '',
                     next_retry_at TEXT NOT NULL DEFAULT '',
                     run_metrics_json TEXT NOT NULL DEFAULT '{}',
+                    multi_agent_trace_json TEXT NOT NULL DEFAULT '{}',
                     event_context_json TEXT NOT NULL DEFAULT '{}',
                     event_report_summary_json TEXT NOT NULL DEFAULT '{}',
                     exports_json TEXT NOT NULL,
@@ -664,6 +725,8 @@ class AnalysisRunManager:
                 conn.execute("ALTER TABLE api_runs ADD COLUMN user_id TEXT NOT NULL DEFAULT '' ")
             if 'run_metrics_json' not in columns:
                 conn.execute("ALTER TABLE api_runs ADD COLUMN run_metrics_json TEXT NOT NULL DEFAULT '{}' ")
+            if 'multi_agent_trace_json' not in columns:
+                conn.execute("ALTER TABLE api_runs ADD COLUMN multi_agent_trace_json TEXT NOT NULL DEFAULT '{}' ")
             if 'recovery_status' not in columns:
                 conn.execute("ALTER TABLE api_runs ADD COLUMN recovery_status TEXT NOT NULL DEFAULT 'normal' ")
             if 'stale_after_restart' not in columns:
@@ -700,14 +763,14 @@ class AnalysisRunManager:
                     SELECT run_id, stock_code, status, created_at, updated_at, detail, last_event,
                            error, owner, owner_role, archived, retry_of_run_id, canceled, latest_report_url,
                            history_url, recovery_status, stale_after_restart, attempts, max_attempts,
-                           priority, worker_id, locked_at, next_retry_at, run_metrics_json, event_context_json,
+                           priority, worker_id, locked_at, next_retry_at, run_metrics_json, multi_agent_trace_json, event_context_json,
                            event_report_summary_json, exports_json, events_json, audit_events_json, user_id
                     FROM api_runs
                     ORDER BY updated_at DESC
                     '''
                 ).fetchall()
             for row in rows:
-                run = self._run_from_row(row)
+                run = self._run_from_row(row, mark_interrupted=self._mark_interrupted_on_load)
                 self._runs[run.run_id] = run
                 recovery_changed = recovery_changed or (str(row[2]) in {'queued', 'running'} and run.stale_after_restart)
             if recovery_changed:
@@ -727,6 +790,7 @@ class AnalysisRunManager:
             payload.setdefault('owner_role', '')
             payload.setdefault('user_id', '')
             payload.setdefault('audit_events', [])
+            payload.setdefault('multi_agent_trace', {})
             payload.setdefault('attempts', 0)
             payload.setdefault('max_attempts', 2)
             payload.setdefault('priority', 0)
@@ -815,20 +879,26 @@ class AnalysisRunManager:
 
     def _save_runs(self) -> None:
         with sqlite3.connect(self._db_path) as conn:
-            conn.execute('DELETE FROM api_runs')
-            conn.executemany(
-                '''
-                INSERT INTO api_runs (
-                    run_id, stock_code, user_id, status, created_at, updated_at, detail, last_event,
-                    error, owner, owner_role, archived, retry_of_run_id, canceled, latest_report_url,
-                    history_url, recovery_status, stale_after_restart, attempts, max_attempts, priority,
-                    worker_id, locked_at, next_retry_at, run_metrics_json, event_context_json, event_report_summary_json,
-                    exports_json, events_json, audit_events_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''',
-                [self._run_to_row(run) for run in self._runs.values()],
-            )
-            conn.commit()
+            self._write_runs(conn, self._runs.values())
+
+    def _save_run(self, run: AnalysisRun) -> None:
+        with sqlite3.connect(self._db_path) as conn:
+            self._write_runs(conn, [run])
+
+    def _write_runs(self, conn: sqlite3.Connection, runs: Iterable[AnalysisRun]) -> None:
+        conn.executemany(
+            '''
+            INSERT OR REPLACE INTO api_runs (
+                run_id, stock_code, user_id, status, created_at, updated_at, detail, last_event,
+                error, owner, owner_role, archived, retry_of_run_id, canceled, latest_report_url,
+                history_url, recovery_status, stale_after_restart, attempts, max_attempts, priority,
+                worker_id, locked_at, next_retry_at, run_metrics_json, multi_agent_trace_json, event_context_json, event_report_summary_json,
+                exports_json, events_json, audit_events_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            [self._run_to_row(run) for run in runs],
+        )
+        conn.commit()
 
     @staticmethod
     def _run_to_row(run: AnalysisRun) -> tuple[object, ...]:
@@ -858,6 +928,7 @@ class AnalysisRunManager:
             run.locked_at,
             run.next_retry_at,
             json.dumps(run.run_metrics, ensure_ascii=False),
+            json.dumps(run.multi_agent_trace, ensure_ascii=False),
             json.dumps(run.event_context, ensure_ascii=False),
             json.dumps(run.event_report_summary, ensure_ascii=False),
             json.dumps(run.exports, ensure_ascii=False),
@@ -865,15 +936,71 @@ class AnalysisRunManager:
             json.dumps(run.audit_events, ensure_ascii=False),
         )
 
+    def refresh_from_store(self, *, mark_interrupted: bool = False) -> None:
+        if not self._db_path.exists():
+            return
+        with sqlite3.connect(self._db_path) as conn:
+            rows = conn.execute(
+                '''
+                SELECT run_id, stock_code, status, created_at, updated_at, detail, last_event,
+                       error, owner, owner_role, archived, retry_of_run_id, canceled, latest_report_url,
+                       history_url, recovery_status, stale_after_restart, attempts, max_attempts,
+                       priority, worker_id, locked_at, next_retry_at, run_metrics_json, multi_agent_trace_json, event_context_json,
+                       event_report_summary_json, exports_json, events_json, audit_events_json, user_id
+                FROM api_runs
+                ORDER BY updated_at DESC
+                '''
+            ).fetchall()
+        with self._lock:
+            for row in rows:
+                incoming = self._run_from_row(row, mark_interrupted=mark_interrupted)
+                current = self._runs.get(incoming.run_id)
+                if current is None or incoming.updated_at >= current.updated_at:
+                    self._runs[incoming.run_id] = incoming
+
+    def _redis_client(self):
+        if not REDIS_URL:
+            return None
+        try:
+            import redis
+
+            return redis.Redis.from_url(REDIS_URL, socket_connect_timeout=0.5, socket_timeout=1.0)
+        except Exception:
+            return None
+
+    def _enqueue_run(self, run_id: str) -> None:
+        client = self._redis_client()
+        if client is None:
+            return
+        try:
+            client.lpush('analysis_runs:queue', run_id)
+        except Exception:
+            return
+
+    def _wait_for_queue_signal(self, *, timeout: int = 1) -> str:
+        client = self._redis_client()
+        if client is None:
+            time.sleep(timeout)
+            return ''
+        try:
+            item = client.brpop('analysis_runs:queue', timeout=timeout)
+            if not item:
+                return ''
+            value = item[1]
+            return value.decode('utf-8') if isinstance(value, bytes) else str(value)
+        except Exception:
+            time.sleep(timeout)
+            return ''
+
     @staticmethod
-    def _run_from_row(row: tuple[object, ...]) -> AnalysisRun:
+    def _run_from_row(row: tuple[object, ...], *, mark_interrupted: bool = True) -> AnalysisRun:
         status = str(row[2])
         recovery_status = str(row[15] or 'normal')
         stale_after_restart = bool(row[16])
         detail = str(row[5])
         last_event = str(row[6])
         error = str(row[7])
-        if status in {'queued', 'running'}:
+        if mark_interrupted and status in {'queued', 'running'}:
             status = 'failed'
             recovery_status = 'interrupted_after_restart'
             stale_after_restart = True
@@ -887,11 +1014,12 @@ class AnalysisRunManager:
         locked_at = str(row[21] or '')
         next_retry_at = str(row[22] or '')
         run_metrics = dict(json.loads(str(row[23]) or '{}'))
-        event_context = dict(json.loads(str(row[24]) or '{}'))
-        event_report_summary = dict(json.loads(str(row[25]) or '{}'))
-        exports = list(json.loads(str(row[26]) or '[]'))
-        events = list(json.loads(str(row[27]) or '[]'))
-        audit_events = list(json.loads(str(row[28]) or '[]'))
+        multi_agent_trace = dict(json.loads(str(row[24]) or '{}'))
+        event_context = dict(json.loads(str(row[25]) or '{}'))
+        event_report_summary = dict(json.loads(str(row[26]) or '{}'))
+        exports = list(json.loads(str(row[27]) or '[]'))
+        events = list(json.loads(str(row[28]) or '[]'))
+        audit_events = list(json.loads(str(row[29]) or '[]'))
         if stale_after_restart and not any(item.get('event') == 'run_interrupted_after_restart' for item in events):
             events.append({
                 'timestamp': datetime.now().isoformat(),
@@ -902,7 +1030,7 @@ class AnalysisRunManager:
         return AnalysisRun(
             run_id=str(row[0]),
             stock_code=str(row[1]),
-            user_id=str(row[29] or '') if len(row) > 29 else '',
+            user_id=str(row[30] or '') if len(row) > 30 else '',
             status=status,
             created_at=str(row[3]),
             updated_at=str(row[4]),
@@ -925,6 +1053,7 @@ class AnalysisRunManager:
             locked_at=locked_at if status == 'running' else '',
             next_retry_at=next_retry_at,
             run_metrics=run_metrics,
+            multi_agent_trace=multi_agent_trace,
             event_context=event_context,
             event_report_summary=event_report_summary,
             exports=exports,
@@ -963,4 +1092,7 @@ class AnalysisRunManager:
         }
 
 
-run_manager = AnalysisRunManager(output_dir=OUTPUT_DIR)
+run_manager = AnalysisRunManager(
+    output_dir=OUTPUT_DIR,
+    auto_start_workers=os.getenv('RUN_MANAGER_AUTO_START', 'true').lower() in {'1', 'true', 'yes', 'on'},
+)

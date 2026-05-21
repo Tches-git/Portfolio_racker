@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useState, useTransition } from 'react'
 
 import { createBatchAnalysisRuns } from '../lib/api'
+import { formatRunStatus } from '../lib/labels'
 
 export function BatchRunLauncher({ initialStocks }: { initialStocks: string[] }) {
   const router = useRouter()
@@ -35,19 +36,25 @@ export function BatchRunLauncher({ initialStocks }: { initialStocks: string[] })
   }
 
   return (
-    <div className="card">
+    <div className="terminalForm">
       <div className="itemTitle">批量多股票运行</div>
       <p className="bodyText">输入多个股票代码，用逗号或空格分隔，直接进入统一 worker 队列。</p>
       <div className="searchRow launcherRow">
-        <input className="input" value={value} onChange={(event) => setValue(event.target.value)} placeholder="输入多个 6 位股票代码，用逗号或空格分隔" />
+        <input
+          className="input"
+          data-run-launcher-input="true"
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder="输入多个 6 位股票代码，用逗号或空格分隔"
+        />
         <button className="ghostButton" onClick={() => void launch()} disabled={loading}>{loading ? '入队中...' : '批量入队'}</button>
       </div>
       {message ? <div className={loading ? 'pendingText' : 'inlineMeta'}>{message}</div> : null}
       {createdRuns.length ? (
         <div className="pillRow">
           {createdRuns.slice(0, 4).map((item) => item.run_id === 'pending'
-            ? <span className="tag" key={item.stock_code}>{item.stock_code} · {item.status}</span>
-            : <Link className="tag tagPositive" href={`/runs/${item.run_id}`} key={item.run_id}>{item.stock_code} · {item.status}</Link>)}
+            ? <span className="tag" key={item.stock_code}>{item.stock_code} · {formatRunStatus(item.status)}</span>
+            : <Link className="tag tagPositive" href={`/runs/${item.run_id}`} key={item.run_id}>{item.stock_code} · {formatRunStatus(item.status)}</Link>)}
         </div>
       ) : null}
     </div>

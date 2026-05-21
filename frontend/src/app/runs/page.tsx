@@ -14,10 +14,12 @@ export default async function RunsIndexPage({
 
   return (
     <WorkspaceShell
-      eyebrow="任务交付中心"
-      title="研报与事件点评任务"
-      description="集中查看研报任务、事件点评、导出物和失败重试，所有任务按当前账号隔离。"
+      eyebrow="Agent 任务"
+      title="多智能体研报任务台"
+      description="集中展示实时采集后的多 Agent 研报任务、角色协作 Trace、可信度审计和交付物。"
       actions={data.actions}
+      className="runsDeskPage"
+      compact
     >
       <TaskDeliveryCenter data={data} />
     </WorkspaceShell>

@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import type { MouseEvent } from 'react'
 
 import { refreshWatchlist } from '../../lib/api'
 import type { WorkbenchAction } from '../../lib/types'
@@ -26,15 +27,34 @@ export function WorkbenchActionButtons({ actions }: { actions: WorkbenchAction[]
     }
   }
 
+  function focusRunCreatePanel(event: MouseEvent<HTMLAnchorElement>, action: WorkbenchAction) {
+    if (action.action_type !== 'create_run' && action.action_type !== 'create_batch_run') return
+    if (!action.href.startsWith('/runs')) return
+    const panel = document.getElementById('run-create-panel')
+    if (!panel) return
+    event.preventDefault()
+    panel.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    panel.classList.remove('runCreatePanelPulse')
+    void panel.offsetWidth
+    panel.classList.add('runCreatePanelPulse')
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#run-create-panel`)
+    const input = panel.querySelector<HTMLInputElement>('[data-run-launcher-input="true"]')
+    input?.focus()
+  }
+
   return (
     <div className="wbActions">
       {actions.map((action) => {
-        const key = `${action.label}-${action.href}-${action.target_id}`
-        const isPageNavigation = (!action.method || action.method === 'GET') && !action.href.startsWith('/api/')
+        const createRunPanelHref =
+          (action.action_type === 'create_run' || action.action_type === 'create_batch_run') && action.href.startsWith('/runs')
+            ? '/runs#run-create-panel'
+            : action.href
+        const key = `${action.label}-${createRunPanelHref}-${action.target_id}`
+        const isPageNavigation = (!action.method || action.method === 'GET') && !createRunPanelHref.startsWith('/api/')
         const className = `wbButton ${action.variant === 'primary' ? 'wbButtonPrimary' : ''}`
         if (isPageNavigation) {
           return (
-            <Link className={className} href={action.href || '#'} key={key}>
+            <Link className={className} href={createRunPanelHref || '#'} key={key} onClick={(event) => focusRunCreatePanel(event, action)}>
               {action.label}
             </Link>
           )

@@ -1,32 +1,28 @@
 import type { ReactNode } from 'react'
 
 import type { WorkbenchAction } from '../../lib/types'
-import { WorkbenchActionButtons } from './workbench-action-buttons'
+import { PageShell } from './primitives'
 
 export function WorkspaceShell({
   eyebrow,
   title,
   description,
   actions = [],
+  className = '',
+  compact = false,
   children,
 }: {
   eyebrow: string
   title: string
   description?: string
   actions?: WorkbenchAction[]
+  className?: string
+  compact?: boolean
   children: ReactNode
 }) {
   return (
-    <main className="wbPage">
-      <header className="wbHeader">
-        <div>
-          <div className="wbEyebrow">{eyebrow}</div>
-          <h1>{title}</h1>
-          {description ? <p>{description}</p> : null}
-        </div>
-        {actions.length ? <WorkbenchActionButtons actions={actions} /> : null}
-      </header>
+    <PageShell eyebrow={eyebrow} title={title} description={description} actions={actions} className={className} compact={compact}>
       {children}
-    </main>
+    </PageShell>
   )
 }

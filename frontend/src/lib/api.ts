@@ -1,4 +1,4 @@
-import type { AlertRuleListResponse, AnalysisRunListResponse, AnalysisRunResponse, AuthLoginRequest, AuthRegisterRequest, AuthResponse, AuthUser, BatchRunCreateResponse, DailyBriefingResponse, DashboardResponse, EventImpactReviewResponse, EventWorkbenchResponse, LatestReportResponse, MarketEvent, MarketEventListResponse, MarketWorkbenchResponse, ReportDiffResponse, RunWorkbenchResponse, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, StockWorkbenchResponse, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDetailResponse, WatchlistListResponse, Watchlist, WorkspaceStocksResponse } from './types'
+import type { AlertRuleListResponse, AnalysisRunListResponse, AnalysisRunResponse, AuthLoginRequest, AuthRegisterRequest, AuthResponse, AuthUser, BatchRunCreateResponse, DailyBriefingResponse, DashboardResponse, EventBacktestResponse, EventImpactReviewResponse, EventWorkbenchResponse, LatestReportResponse, MarketEvent, MarketEventListResponse, MarketWorkbenchResponse, QualityWorkbenchResponse, ReportDiffResponse, RunWorkbenchResponse, StockEventTimelineResponse, StockHistoryResponse, StockNewsResponse, StockSearchResponse, StockWorkbenchResponse, TrackingAlertListResponse, WatchlistCreateRequest, WatchlistDetailResponse, WatchlistListResponse, Watchlist, WatchlistUpdateRequest, WorkspaceStocksResponse } from './types'
 
 export const API_BASE = typeof window === 'undefined'
   ? process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000'
@@ -174,6 +174,10 @@ export async function fetchRunWorkbench(limit = 24, selectedRunId = '', options:
   return apiFetch<RunWorkbenchResponse>(`/api/v1/ui/runs?${query.toString()}`, options, '获取任务交付中心失败')
 }
 
+export async function fetchQualityWorkbench(options: ApiRequestInit = {}): Promise<QualityWorkbenchResponse> {
+  return apiFetch<QualityWorkbenchResponse>('/api/v1/ui/quality', options, '获取质量指标失败')
+}
+
 export async function fetchLatestReport(stockCode: string, options: ApiRequestInit = {}): Promise<LatestReportResponse | null> {
   try {
     return await apiFetch<LatestReportResponse>(`/api/v1/reports/latest/${stockCode}`, options, '获取最新研报失败')
@@ -194,6 +198,17 @@ export async function fetchStockHistory(stockCode: string, options: ApiRequestIn
 
 export async function fetchStockNews(stockCode: string, limit = 8, options: ApiRequestInit = {}): Promise<StockNewsResponse> {
   return apiFetch<StockNewsResponse>(`/api/v1/news/${stockCode}?limit=${limit}`, options, '获取股票新闻失败')
+}
+
+export async function fetchStockSearch(query: string, limit = 12, options: ApiRequestInit = {}): Promise<StockSearchResponse> {
+  const params = new URLSearchParams()
+  params.set('q', query)
+  params.set('limit', String(limit))
+  return apiFetch<StockSearchResponse>(`/api/v1/stocks/search?${params.toString()}`, options, '搜索股票失败')
+}
+
+export async function fetchEventBacktest(stockCode: string, options: ApiRequestInit = {}): Promise<EventBacktestResponse> {
+  return apiFetch<EventBacktestResponse>(`/api/v1/stocks/${stockCode}/event-backtest`, options, '获取事件影响回测失败')
 }
 
 export async function fetchMarketEvents(stockCodes: string[] = [], limitPerStock = 4, mode = 'realtime', status = '', options: ApiRequestInit = {}): Promise<MarketEventListResponse> {
@@ -288,8 +303,22 @@ export async function createWatchlist(payload: WatchlistCreateRequest): Promise<
   }, '创建组合失败')
 }
 
+export async function updateWatchlist(watchlistId: string, payload: WatchlistUpdateRequest): Promise<Watchlist> {
+  return apiFetch<Watchlist>(`/api/v1/watchlists/${encodeURIComponent(watchlistId)}`, {
+    method: 'PATCH',
+    body: payload,
+  }, '更新组合失败')
+}
+
+export async function deleteWatchlist(watchlistId: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/watchlists/${encodeURIComponent(watchlistId)}`, {
+    method: 'DELETE',
+  }, '删除组合失败')
+}
+
 export async function fetchRecentRuns(limit = 10, options: ApiRequestInit = {}): Promise<AnalysisRunListResponse> {
-  return apiFetch<AnalysisRunListResponse>(`/api/v1/runs?limit=${limit}`, options, '获取最近运行任务失败')
+  const payload = await fetchRunWorkbench(limit, '', options)
+  return payload.runs
 }
 
 export async function fetchWorkspaceStocks(options: ApiRequestInit = {}): Promise<WorkspaceStocksResponse> {

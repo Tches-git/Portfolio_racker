@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
@@ -36,6 +37,7 @@ export function UserMenu({ user }: { user: AuthUser }) {
             <span>{user.email}</span>
           </div>
           <div className="userMenuRole">{user.role === 'admin' ? '管理员' : '普通用户'} · 独立数据空间</div>
+          <Link className="userMenuLink" href="/quality" onClick={() => setOpen(false)}>质量指标</Link>
           {error ? <div className="authError">{error}</div> : null}
           <button className="logoutButton" type="button" onClick={handleLogout}>退出登录</button>
         </div>

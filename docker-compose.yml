@@ -28,6 +28,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       AUTH_REQUIRED: "true"
       ENABLE_SIGNUP: ${ENABLE_SIGNUP:-true}
+      RUN_MANAGER_AUTO_START: "false"
     depends_on:
       - postgres
       - redis
@@ -47,13 +48,15 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-portfolio}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-portfolio_tracker}
       REDIS_URL: redis://redis:6379/0
       AUTH_REQUIRED: "true"
+      RUN_MANAGER_AUTO_START: "false"
+      WORKER_ID: worker-compose-1
     depends_on:
       - postgres
       - redis
     volumes:
       - output_data:/app/output
       - app_data:/app/data
-    command: ["python", "-c", "import time; print('worker placeholder: phase 1 run manager is still API in-process'); time.sleep(31536000)"]
+    command: ["python", "-m", "app.api.worker"]
 
   frontend:
     build:

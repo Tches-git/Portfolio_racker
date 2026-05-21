@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
 import { createAnalysisRun, fetchAnalysisRun } from '../lib/api'
+import { formatRunEvent, formatRunStatus } from '../lib/labels'
 import type { AnalysisRunResponse } from '../lib/types'
 
 export function AnalysisLauncher({ initialCode, initialRuns = [] }: { initialCode: string; initialRuns?: AnalysisRunResponse[] }) {
@@ -60,6 +61,7 @@ export function AnalysisLauncher({ initialCode, initialRuns = [] }: { initialCod
     setRun({
       run_id: 'pending',
       stock_code: normalized,
+      stock_name: '',
       status: 'queued',
       created_at: '',
       updated_at: '',
@@ -114,7 +116,23 @@ export function AnalysisLauncher({ initialCode, initialRuns = [] }: { initialCod
         event_commentary_url: '',
       },
       audit_events: [],
-      run_metrics: { duration_s: 0, llm_calls: 0, tool_calls: 0, total_tokens: 0, success: false },
+      run_metrics: {
+        duration_s: 0,
+        llm_calls: 0,
+        tool_calls: 0,
+        total_tokens: 0,
+        success: false,
+        citation_coverage_rate: 0,
+        unsupported_claim_count: 0,
+        source_reference_count: 0,
+        retrieval_topk_hit_rate: 0,
+        rerank_selected_count: 0,
+        multi_agent_role_count: 0,
+        multi_agent_completed_count: 0,
+        multi_agent_failed_count: 0,
+        citation_audit_coverage_rate: 0,
+      },
+      multi_agent_trace: { mode: 'autogen_graphflow', role_count: 0, completed_role_count: 0, failed_role_count: 0, roles: [] },
       actions: { can_retry: false, can_cancel: false, can_assign: false, can_archive: false, can_change_owner: false, can_view_audit: false, suggested_next_action: '等待任务进入 worker 队列', product_route: `/stocks/${normalized}`, history_route: `/stocks/${normalized}/history`, exports_route: `/stocks/${normalized}/exports` },
       observability: { event_count: 0, artifact_count: 0, has_error: false, latest_signal: 'queued', owner_label: '未分配', archive_label: '活跃', retry_lineage: '', recovery_status: 'normal', stale_after_restart: false, attempts: 0, max_attempts: 0, worker_id: '', locked_at: '', next_retry_at: '' },
     })
@@ -161,8 +179,8 @@ export function AnalysisLauncher({ initialCode, initialRuns = [] }: { initialCod
           {run ? (
             <div className="metricStack">
               <div className="metricRow"><span>任务 ID</span><strong>{run.run_id}</strong></div>
-              <div className="metricRow"><span>状态</span><strong>{run.status}</strong></div>
-              <div className="metricRow"><span>最新事件</span><strong>{run.last_event || '--'}</strong></div>
+              <div className="metricRow"><span>状态</span><strong>{formatRunStatus(run.status)}</strong></div>
+              <div className="metricRow"><span>最新事件</span><strong>{run.last_event ? formatRunEvent(run.last_event) : '--'}</strong></div>
               <div className="metricRow"><span>状态说明</span><strong>{run.detail || '--'}</strong></div>
               <div className="metricRow"><span>事件数量</span><strong>{run.events.length}</strong></div>
               <div className="metricRow"><span>运行指标</span><strong>{run.run_metrics.success ? `${run.run_metrics.duration_s.toFixed(1)}s / ${run.run_metrics.total_tokens} tokens` : '--'}</strong></div>

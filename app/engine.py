@@ -48,6 +48,14 @@ class ReportEngine:
             run_metrics["trace_id"] = trace_summary.get("trace_id", "")
             run_metrics["tool_calls"] = trace_summary.get("tool_calls", 0)
             run_metrics["errors"] = trace_summary.get("errors", 0)
+        multi_agent = dict(state.run_payload.get("multi_agent") or {})
+        if multi_agent:
+            run_metrics.update({
+                "multi_agent_role_count": int(multi_agent.get("role_count", 0) or 0),
+                "multi_agent_completed_count": int(multi_agent.get("completed_role_count", 0) or 0),
+                "multi_agent_failed_count": int(multi_agent.get("failed_role_count", 0) or 0),
+                "citation_audit_coverage_rate": float(multi_agent.get("citation_audit_coverage_rate", 0.0) or 0.0),
+            })
         self._last_run_metrics = run_metrics
         state.run_metrics = run_metrics
         state.run_payload["metrics"] = dict(run_metrics)

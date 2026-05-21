@@ -175,6 +175,7 @@ class AnalysisRunRecord(Base):
     locked_at: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     next_retry_at: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     run_metrics: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    multi_agent_trace: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
     event_context: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
     event_report_summary: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
     exports: Mapped[list[dict]] = mapped_column(JSONType, nullable=False, default=list)

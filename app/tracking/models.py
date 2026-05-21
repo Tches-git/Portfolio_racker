@@ -57,6 +57,7 @@ class TrackingAlert:
     alert_id: str
     stock_code: str
     event_id: str
+    stock_name: str = ""
     rule_id: str = ""
     rule_name: str = ""
     alert_type: str = "high_impact"

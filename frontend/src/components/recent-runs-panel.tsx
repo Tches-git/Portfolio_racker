@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { formatRunEvent, formatRunStatus } from '../lib/labels'
 import type { AnalysisRunResponse } from '../lib/types'
 
 export function RecentRunsPanel({ runs }: { runs: AnalysisRunResponse[] }) {
@@ -33,8 +34,8 @@ export function RecentRunsPanel({ runs }: { runs: AnalysisRunResponse[] }) {
                 <div className="itemTitle">{run.stock_code}</div>
                 <div className="itemMeta">{run.updated_at || run.created_at || '暂无时间'}</div>
               </div>
-              <span className={`tag${run.status === 'completed' ? ' tagPositive' : run.status === 'failed' ? ' tagNegative' : ''}`}>{run.status}</span>
-              <div className="inlineMeta">{run.observability.latest_signal || run.last_event || run.detail || '--'}</div>
+              <span className={`tag${run.status === 'completed' ? ' tagPositive' : run.status === 'failed' ? ' tagNegative' : ''}`}>{formatRunStatus(run.status)}</span>
+              <div className="inlineMeta">{run.observability.latest_signal ? formatRunEvent(run.observability.latest_signal) : run.last_event ? formatRunEvent(run.last_event) : run.detail || '--'}</div>
             </Link>
           )) : <div className="emptyState">当前还没有可展示的运行任务。</div>}
         </div>

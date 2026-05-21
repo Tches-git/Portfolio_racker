@@ -1,6 +1,7 @@
 """OpenAI 兼容 Provider 实现（同时兼容 DeepSeek / 通义千问等）"""
 from __future__ import annotations
 import json
+import os
 
 
 class OpenAIProvider:
@@ -16,6 +17,8 @@ class OpenAIProvider:
         kwargs: dict = {"api_key": api_key}
         if base_url:
             kwargs["base_url"] = base_url
+        self._timeout = float(os.getenv("LLM_TIMEOUT_SECONDS", "90"))
+        kwargs["timeout"] = self._timeout
         self._client = OpenAI(**kwargs)
 
     def chat(self, messages: list[dict], *, model: str,
@@ -25,6 +28,7 @@ class OpenAIProvider:
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout=self._timeout,
         )
         usage = resp.usage
         usage_dict = {}
@@ -49,6 +53,7 @@ class OpenAIProvider:
             tools=tools,
             tool_choice="auto",
             temperature=temperature,
+            timeout=self._timeout,
         )
         usage = resp.usage
         usage_dict = {}
@@ -82,5 +87,5 @@ class OpenAIProvider:
         return result, usage_dict
 
     def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
-        resp = self._client.embeddings.create(model=model, input=texts)
+        resp = self._client.embeddings.create(model=model, input=texts, timeout=self._timeout)
         return [item.embedding for item in resp.data]

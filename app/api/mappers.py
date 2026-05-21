@@ -13,6 +13,7 @@ from app.api.schemas import (
     HistoryInsightDTO,
     HistoryRecordDTO,
     LatestReportResponse,
+    MultiAgentTraceDTO,
     QualitySummaryDTO,
     ReportSummaryDTO,
     RunEventContextDTO,
@@ -148,7 +149,13 @@ def build_run_response(run) -> AnalysisRunResponse:
     event_context = dict(getattr(run, 'event_context', {}) or {})
     event_report_summary = dict(getattr(run, 'event_report_summary', {}) or {})
     audit_events = list(getattr(run, 'audit_events', []) or [])
+    multi_agent_trace = dict(getattr(run, 'multi_agent_trace', {}) or {})
     stock_code = str(getattr(run, 'stock_code', '') or '')
+    stock_name = (
+        str(getattr(run, 'stock_name', '') or '')
+        or str(event_context.get('stock_name') or '')
+        or str(getattr(getattr(run, 'state', None), 'stock_name', '') or '')
+    )
     status = str(getattr(run, 'status', '') or '')
     owner = str(getattr(run, 'owner', '') or '')
     archived = bool(getattr(run, 'archived', False))
@@ -158,6 +165,7 @@ def build_run_response(run) -> AnalysisRunResponse:
     return AnalysisRunResponse(
         run_id=run.run_id,
         stock_code=run.stock_code,
+        stock_name=stock_name,
         status=run.status,
         created_at=run.created_at,
         updated_at=run.updated_at,
@@ -181,7 +189,17 @@ def build_run_response(run) -> AnalysisRunResponse:
             tool_calls=int(metrics.get('tool_calls', 0) or 0),
             total_tokens=int(metrics.get('total_tokens', 0) or 0),
             success=bool(metrics.get('success', False)),
+            citation_coverage_rate=float(metrics.get('citation_coverage_rate', 0.0) or 0.0),
+            unsupported_claim_count=int(metrics.get('unsupported_claim_count', 0) or 0),
+            source_reference_count=int(metrics.get('source_reference_count', 0) or 0),
+            retrieval_topk_hit_rate=float(metrics.get('retrieval_topk_hit_rate', metrics.get('hybrid_retrieval_hit_rate', 0.0)) or 0.0),
+            rerank_selected_count=int(metrics.get('rerank_selected_count', 0) or 0),
+            multi_agent_role_count=int(metrics.get('multi_agent_role_count', 0) or 0),
+            multi_agent_completed_count=int(metrics.get('multi_agent_completed_count', 0) or 0),
+            multi_agent_failed_count=int(metrics.get('multi_agent_failed_count', 0) or 0),
+            citation_audit_coverage_rate=float(metrics.get('citation_audit_coverage_rate', 0.0) or 0.0),
         ),
+        multi_agent_trace=MultiAgentTraceDTO(**multi_agent_trace),
         actions=RunActionAvailabilityDTO(
             can_retry=can_retry,
             can_cancel=can_cancel,

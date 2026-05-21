@@ -53,6 +53,97 @@ def test_main_dispatches_quality_gate_subcommand(monkeypatch):
     assert called == {"module_name": "scripts.quality_gate", "argv": ["--skip-regression"]}
 
 
+def test_main_dispatches_agent_eval(monkeypatch):
+    called = {}
+
+    def fake_run_agent_eval(argv):
+        called["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(main, "_run_agent_eval", fake_run_agent_eval)
+
+    assert main.main(["agent-eval", "--target-count", "32"]) == 0
+    assert called["argv"] == ["--target-count", "32"]
+
+
+def test_main_dispatches_build_tracking_benchmark(monkeypatch):
+    called = {}
+
+    def fake_run_build_tracking_benchmark(argv):
+        called["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(main, "_run_build_tracking_benchmark", fake_run_build_tracking_benchmark)
+
+    assert main.main(["build-tracking-benchmark", "--target-count", "120"]) == 0
+    assert called["argv"] == ["--target-count", "120"]
+
+
+def test_main_dispatches_finance_qa_eval(monkeypatch):
+    called = {}
+
+    def fake_run_finance_qa_eval(argv):
+        called["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(main, "_run_finance_qa_eval", fake_run_finance_qa_eval)
+
+    assert main.main(["finance-qa-eval", "--benchmark", "sample.jsonl"]) == 0
+    assert called["argv"] == ["--benchmark", "sample.jsonl"]
+
+
+def test_main_dispatches_finance_qa_predict(monkeypatch):
+    called = {}
+
+    def fake_run_finance_qa_predict(argv):
+        called["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(main, "_run_finance_qa_predict", fake_run_finance_qa_predict)
+
+    assert main.main(["finance-qa-predict", "--benchmark", "sample.jsonl", "--limit", "2"]) == 0
+    assert called["argv"] == ["--benchmark", "sample.jsonl", "--limit", "2"]
+
+
+def test_main_dispatches_kb_sources(monkeypatch):
+    called = {}
+
+    def fake_run_kb_sources(argv):
+        called["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(main, "_run_kb_sources", fake_run_kb_sources)
+
+    assert main.main(["kb-sources", "list", "--market", "china"]) == 0
+    assert called["argv"] == ["list", "--market", "china"]
+
+
+def test_main_dispatches_kb_cache(monkeypatch):
+    called = {}
+
+    def fake_run_kb_cache(argv):
+        called["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(main, "_run_kb_cache", fake_run_kb_cache)
+
+    assert main.main(["kb-cache", "import", "--limit", "3"]) == 0
+    assert called["argv"] == ["import", "--limit", "3"]
+
+
+def test_main_dispatches_kb_bulk(monkeypatch):
+    called = {}
+
+    def fake_run_kb_bulk(argv):
+        called["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(main, "_run_kb_bulk", fake_run_kb_bulk)
+
+    assert main.main(["kb-bulk", "import", "--skip-daily-bars"]) == 0
+    assert called["argv"] == ["import", "--skip-daily-bars"]
+
+
 def test_main_prints_root_help(monkeypatch, capsys):
     monkeypatch.setattr(main, "print_root_help", lambda: print("ROOT_HELP"))
 

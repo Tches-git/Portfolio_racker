@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-05-20T14:20:25.395796+00:00",
+  "catalog_path": "/Users/tchest/.codex/worktrees/4a21/1/data/external_knowledge_sources/catalog.json",
+  "output_dir": "/Users/tchest/.codex/worktrees/4a21/1/data/knowledge_base/external_sources",
+  "source_ids": [
+    "ai4finance-fingpt",
+    "ai4finance-finrobot",
+    "dgunning-edgartools",
+    "tongyi-fin-qwen",
+    "fudandisc-disc-finllm",
+    "valuesimplex-finlongeval",
+    "czyssrs-finqa",
+    "patronus-financebench",
+    "finagent-benchmark",
+    "tatqa"
+  ],
+  "source_count": 10,
+  "outputs": [
+    "/Users/tchest/.codex/worktrees/4a21/1/data/knowledge_base/external_sources/ai4finance-fingpt.md",
+    "/Users/tchest/.codex/worktrees/4a21/1/data/knowledge_base/external_sources/ai4finance-finrobot.md",
+    "/Users/tchest/.codex/worktrees/4a21/1/data/knowledge_base/external_sources/dgunning-edgartools.md",
+    "/Users/tchest/.codex/worktrees/4a21/1/data/knowledge_base/external_sources/tongyi-fin-qwen.md",
+    "/Users/tchest/.codex/worktrees/4a21/1/data/knowledge_base/external_sources/fudandisc-disc-finllm.md",
+    "/Users/tchest/.codex/worktrees/4a21/1/data/knowledge_base/external_sources/valuesimplex-finlongeval.md",
+    "/Users/tchest/.codex/worktrees/4a21/1/data/knowledge_base/external_sources/czyssrs-finqa.md",
+    "/Users/tchest/.codex/worktrees/4a21/1/data/knowledge_base/external_sources/patronus-financebench.md",
+    "/Users/tchest/.codex/worktrees/4a21/1/data/knowledge_base/external_sources/finagent-benchmark.md",
+    "/Users/tchest/.codex/worktrees/4a21/1/data/knowledge_base/external_sources/tatqa.md"
+  ]
+}

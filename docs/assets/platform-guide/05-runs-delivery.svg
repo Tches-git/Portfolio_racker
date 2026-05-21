@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="任务交付中心示意图">
+  <rect width="1280" height="720" fill="#05080d"/>
+  <rect x="44" y="42" width="1192" height="84" fill="#07111b" stroke="#26374a"/>
+  <text x="76" y="82" fill="#f8fafc" font-size="26" font-family="Arial, sans-serif" font-weight="800">任务交付中心</text>
+  <text x="76" y="110" fill="#8fa0b7" font-size="15" font-family="Arial, sans-serif">查看多智能体研报任务、执行链路、可信度指标和导出物。</text>
+  <rect x="44" y="160" width="538" height="462" fill="#07111b" stroke="#26374a"/>
+  <text x="76" y="204" fill="#f6b73c" font-size="13" font-family="Arial, sans-serif" font-weight="700">RUN LEDGER</text>
+  <line x1="76" y1="236" x2="548" y2="236" stroke="#203148"/>
+  <text x="88" y="276" fill="#edf4ff" font-size="16" font-family="Arial, sans-serif" font-weight="700">已完成 · 股票 A</text>
+  <text x="88" y="306" fill="#8fa0b7" font-size="14" font-family="Arial, sans-serif">多智能体链路完成，已生成交付物</text>
+  <line x1="76" y1="334" x2="548" y2="334" stroke="#182638"/>
+  <text x="88" y="374" fill="#edf4ff" font-size="16" font-family="Arial, sans-serif" font-weight="700">失败 · 股票 B</text>
+  <text x="88" y="404" fill="#8fa0b7" font-size="14" font-family="Arial, sans-serif">可查看错误并重试</text>
+  <rect x="626" y="160" width="610" height="462" fill="#080d13" stroke="#26374a"/>
+  <text x="658" y="204" fill="#f6b73c" font-size="13" font-family="Arial, sans-serif" font-weight="700">MULTI AGENT TRACE</text>
+  <circle cx="702" cy="272" r="16" fill="#f6b73c"/>
+  <circle cx="702" cy="340" r="16" fill="#f6b73c"/>
+  <circle cx="702" cy="408" r="16" fill="#f6b73c"/>
+  <line x1="702" y1="288" x2="702" y2="324" stroke="#f6b73c" stroke-width="3"/>
+  <line x1="702" y1="356" x2="702" y2="392" stroke="#f6b73c" stroke-width="3"/>
+  <text x="744" y="278" fill="#edf4ff" font-size="16" font-family="Arial, sans-serif" font-weight="700">Planner / Market / Event</text>
+  <text x="744" y="346" fill="#edf4ff" font-size="16" font-family="Arial, sans-serif" font-weight="700">Risk Reviewer / Writer</text>
+  <text x="744" y="414" fill="#edf4ff" font-size="16" font-family="Arial, sans-serif" font-weight="700">Citation Auditor</text>
+  <rect x="744" y="466" width="120" height="36" rx="3" fill="#f6b73c"/>
+  <text x="776" y="489" fill="#05080d" font-size="14" font-family="Arial, sans-serif" font-weight="800">预览报告</text>
+  <rect x="880" y="466" width="120" height="36" rx="3" fill="#0b1118" stroke="#2b3a4d"/>
+  <text x="912" y="489" fill="#dbe7f6" font-size="14" font-family="Arial, sans-serif" font-weight="700">下载文件</text>
+</svg>

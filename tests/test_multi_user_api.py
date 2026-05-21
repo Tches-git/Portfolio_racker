@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 import app.api.server as server
 from app.api.server import app
 from app.db.models import ExportArtifactRecord
-from app.db.repositories import save_user_events
+from app.db.repositories import create_user_watchlist, save_user_events
 from app.tracking.models import EventCollection, MarketEvent
 from tests.helpers import multi_user_client
 
@@ -105,6 +105,8 @@ def test_new_user_workspace_starts_empty_and_does_not_collect_default_stocks(mon
 def test_event_history_and_status_are_isolated_between_users():
     with multi_user_client() as (client, users, Session):
         with Session() as db:
+            create_user_watchlist(db, user_id=users["alice"].id, name="Alice 组合", stock_codes=["600519"])
+            create_user_watchlist(db, user_id=users["bob"].id, name="Bob 组合", stock_codes=["000858"])
             save_user_events(
                 db,
                 user_id=users["alice"].id,

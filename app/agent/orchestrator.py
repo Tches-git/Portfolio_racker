@@ -1,7 +1,10 @@
-"""多 Agent 编排器 — 调度 Research Agent + Report Agent（含规划/反思/MC/引用）"""
+"""多 Agent 编排器 — 调度 AutoGen 多角色研究流 + Report Agent（含RAG/MC/引用）"""
 from __future__ import annotations
 import logging
+import os
+import queue
 import re
+import threading
 from typing import Callable
 from datetime import datetime
 
@@ -15,7 +18,7 @@ from app.config import (
 )
 from app.llm import chat
 from app.models import AblationConfig, AnalysisState
-from app.agent.react_agent import ReActAgent, AgentResult
+from app.agent.multi_agent import AutoGenMultiAgentWorkflow, AgentResult, MultiAgentResearchResult
 from app.rag.knowledge_base import get_knowledge_base
 from app.rag.graph_builder import build_graph_summary
 from app.rag.graph_store import GraphStore
@@ -52,6 +55,7 @@ from app.agent.prefetch_helpers import (
 logger = logging.getLogger("fin.agent.orch")
 
 StepCallback = Callable[[str, str, AnalysisState], None]
+WRITER_PHASE_TIMEOUT_SECONDS = float(os.getenv("WRITER_PHASE_TIMEOUT_SECONDS", "120"))
 
 
 class AgentOrchestrator:
@@ -64,10 +68,19 @@ class AgentOrchestrator:
         self._agent_steps: list[dict] = []
         self._rag_hits: list[dict] = []
         self._tracer: Tracer | None = None
+        self._multi_agent_workflow: AutoGenMultiAgentWorkflow | None = None
 
     @property
     def tracer(self) -> Tracer | None:
         return self._tracer
+
+    @property
+    def agent_trace(self) -> list[dict]:
+        return list(self._agent_steps)
+
+    @property
+    def rag_trace(self) -> list[dict]:
+        return list(self._rag_hits)
 
     def run(self, stock_code: str, *, uploaded_items: list[dict] | None = None, event_context: dict | None = None) -> AnalysisState:
         state = AnalysisState(stock_code=stock_code, ablation_config=self.ablation_config, event_context=dict(event_context or {}))
@@ -130,29 +143,22 @@ class AgentOrchestrator:
         self._hydrate_live_sources(state)
 
     def _run_research_phase(self, stock_code: str, state: AnalysisState) -> None:
-        self.on_step("research_start", "Research Agent 开始自主研究（规划→执行→反思）...", state)
-        research_task = self._build_research_task(stock_code, state)
+        self.on_step("research_start", "AutoGen 多智能体开始前置研究（规划→行情→估值→事件→风险→写作 brief）...", state)
 
         def on_research_step(event: str, detail: str, info: dict):
-            step_info = {"agent": "research", "event": event, "detail": detail, **info}
+            step_info = {"agent": info.get("role_id", "multi_agent"), "event": event, "detail": detail, **info}
             self._agent_steps.append(step_info)
             if info.get("tool") == "rag_query":
                 self._rag_hits.append(step_info)
             state.log(f"  🤖 [{event}] {detail[:150]}")
 
-        try:
-            research_agent = ReActAgent(
-                role="research",
-                on_step=on_research_step,
-                ablation_config=state.ablation_config,
-            )
-        except TypeError:
-            research_agent = ReActAgent(role="research", on_step=on_research_step)
-        with self._tracer.span("research_agent", "phase"):
-            research_result = research_agent.run(research_task, state)
+        workflow = AutoGenMultiAgentWorkflow(on_role_step=on_research_step)
+        self._multi_agent_workflow = workflow
+        with self._tracer.span("multi_agent_research", "phase"):
+            research_result = workflow.run(stock_code, state)
         self._apply_research_result(state, research_result)
 
-    def _apply_research_result(self, state: AnalysisState, research_result: AgentResult) -> None:
+    def _apply_research_result(self, state: AnalysisState, research_result: AgentResult | MultiAgentResearchResult) -> None:
         research_plan_text = "\n".join(f"[{p.step_id}] {p.objective} → {p.preferred_tool}" for p in research_result.plan)
         state.analysis_payload.update({
             "research_conclusion": research_result.answer,
@@ -162,8 +168,15 @@ class AgentOrchestrator:
         state.sections["research_conclusion"] = research_result.answer
         state.sections["research_plan"] = research_plan_text
         state.sections["research_reflection"] = research_result.reflection
-        state.log(f"  📊 Research Agent 完成: {research_result.total_steps} 步推理")
-        self.on_step("research_done", f"研究完成: {research_result.total_steps} 步", state)
+        trace = getattr(research_result, "trace", None)
+        if trace is not None and "multi_agent_trace" not in state.run_payload:
+            trace_payload = trace.to_dict() if hasattr(trace, "to_dict") else dict(trace)
+            state.run_payload["multi_agent_trace"] = trace_payload
+            state.analysis_payload["multi_agent_trace"] = trace_payload
+            state.sections["multi_agent_trace"] = str(trace_payload)
+        total_steps = len(getattr(getattr(research_result, "trace", None), "roles", []) or [])
+        state.log(f"  📊 多智能体研究完成: {total_steps} 个角色")
+        self.on_step("research_done", f"多智能体研究完成: {total_steps} 个角色", state)
 
     def _prepare_writer_state(self, state: AnalysisState, kb):
         if state.metrics:
@@ -199,9 +212,25 @@ class AgentOrchestrator:
     def _run_writer_phase(self, state: AnalysisState, kb, prev_record, graph_summary, section_query_overrides: dict[str, str], section_query_refinements: dict[str, str]) -> None:
         self.on_step("writer_start", "Report Agent 开始撰写深度研报（RAG增强+引用来源）...", state)
         with self._tracer.span("write_report", "phase"):
-            report = self._write_report_with_rag(state, kb, prev_record)
+            try:
+                report = self._run_with_timeout(
+                    lambda: self._write_report_with_rag(state, kb, prev_record),
+                    timeout_s=WRITER_PHASE_TIMEOUT_SECONDS,
+                    label="Report Agent 写作阶段",
+                )
+            except Exception as exc:
+                state.analysis_payload["writer_fallback_error"] = str(exc)
+                state.sections["writer_fallback_error"] = str(exc)
+                self.on_step("writer_fallback", f"LLM 写作链路不可用，已生成降级研报: {exc}", state)
+                report = self._build_fallback_report(state, str(exc))
         report = post_process_report(self, report, state)
         state.final_report = report
+        workflow = getattr(self, "_multi_agent_workflow", None)
+        if workflow is not None and hasattr(workflow, "run_post_write_audit"):
+            self.on_step("citation_audit_start", "CitationAuditAgent 开始报告后引用审计...", state)
+            with self._tracer.span("citation_audit", "phase"):
+                workflow.run_post_write_audit(state)
+            self.on_step("citation_audit_done", "引用审计完成", state)
         refined_queries = self._build_section_graph_query_refinements(state)
         if any(refined_queries.values()):
             self._refresh_graph_context(
@@ -211,6 +240,86 @@ class AgentOrchestrator:
                 section_query_refinements=refined_queries,
             )
         self.on_step("writer_done", "研报撰写完成", state)
+
+    def _run_with_timeout(self, func, *, timeout_s: float, label: str):
+        """用守护线程包裹可能卡住的外部调用，超时后让流程进入降级输出。"""
+        if timeout_s <= 0:
+            return func()
+
+        result_queue: queue.Queue[tuple[str, object]] = queue.Queue(maxsize=1)
+
+        def target() -> None:
+            try:
+                result_queue.put(("ok", func()))
+            except BaseException as exc:  # noqa: BLE001 - 需要把线程异常带回主流程
+                result_queue.put(("error", exc))
+
+        thread = threading.Thread(target=target, name=f"{label}-timeout-guard", daemon=True)
+        thread.start()
+        thread.join(timeout_s)
+        if thread.is_alive():
+            raise TimeoutError(f"{label}超过 {timeout_s:.0f}s 未返回")
+        status, payload = result_queue.get_nowait()
+        if status == "error":
+            raise payload
+        return payload
+
+    def _build_fallback_report(self, state: AnalysisState, error: str) -> str:
+        """LLM 写作失败时生成可交付的结构化降级报告。"""
+
+        stock_label = f"{state.stock_name or '目标公司'}（{state.stock_code}）"
+        role_outputs = state.analysis_payload.get("multi_agent_role_outputs") or {}
+        if not isinstance(role_outputs, dict):
+            role_outputs = {}
+        source_lines = []
+        for index, source in enumerate(list(state.source_refs or [])[:8], start=1):
+            if isinstance(source, dict):
+                title = source.get("title") or source.get("source") or source.get("url") or "来源"
+                url = source.get("url") or ""
+                source_lines.append(f"{index}. {title}{f'：{url}' if url else ''}")
+            else:
+                source_lines.append(f"{index}. {source}")
+        risk_lines = [f"- [{risk.level}] {risk.description}" for risk in (state.risks or [])[:8]]
+        gap_text = state.sections.get("data_gaps") or self._data_gap_summary_for_fallback(state)
+        return f"""# {stock_label} 多智能体降级研报
+
+> 说明：正式 LLM 写作链路暂时不可用，本报告基于已完成的多 Agent 前置研究、结构化数据和 RAG 来源生成，用于保留任务交付与审计链路。失败原因：{error}
+
+## 一、研究结论摘要
+{state.analysis_payload.get("research_conclusion") or "多 Agent 前置研究已完成，但正式写作链路未返回正文。"}
+
+## 二、角色协作摘要
+- 研究规划：{role_outputs.get("planner", "暂无")}
+- 行情分析：{role_outputs.get("market_data", "暂无")}
+- 基本面估值：{role_outputs.get("fundamental_valuation", "暂无")}
+- 事件分析：{role_outputs.get("event_analysis", "暂无")}
+- 风险复核：{role_outputs.get("risk_review", "暂无")}
+- 写作 brief：{role_outputs.get("report_writer", "暂无")}
+
+## 三、风险与数据缺口
+{chr(10).join(risk_lines) if risk_lines else "- 暂无结构化风险条目。"}
+
+数据缺口：{gap_text or "暂无额外数据缺口。"}
+
+## 四、来源与可信度
+{chr(10).join(source_lines) if source_lines else "- 当前任务未沉淀可展示来源，引用审计会标记为降级。"}
+
+## 五、后续建议
+- 先检查 LLM 中转服务、模型名和 API key 是否可用。
+- 如需正式研报正文，可在任务详情页重试；重试会复用当前账号的研究资产与事件上下文。
+"""
+
+    def _data_gap_summary_for_fallback(self, state: AnalysisState) -> str:
+        gaps = []
+        if not state.profile:
+            gaps.append("公司画像缺失")
+        if not state.metrics:
+            gaps.append("财务指标缺失")
+        if not state.news and not state.announcements:
+            gaps.append("新闻/公告上下文不足")
+        if not state.source_refs:
+            gaps.append("RAG 来源不足")
+        return "、".join(gaps)
 
     def _ingest_uploaded_documents(self, state: AnalysisState, uploaded_items: list[dict]) -> None:
         if not uploaded_items:

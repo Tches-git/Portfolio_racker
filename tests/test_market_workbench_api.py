@@ -35,6 +35,32 @@ def test_market_workbench_requires_login():
     assert response.json()["detail"] == "请先登录"
 
 
+def test_stock_search_requires_login():
+    with database_client() as (client, _Session):
+        response = client.get("/api/v1/stocks/search?q=茅台")
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "请先登录"
+
+
+def test_stock_search_returns_name_fuzzy_matches(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "search_a_stocks",
+        lambda query, limit=12: [{"code": "600519", "name": "贵州茅台", "match_text": "贵州茅台"}],
+    )
+
+    with multi_user_client() as (client, _users, _Session):
+        response = client.get("/api/v1/stocks/search?q=茅台", headers=_headers("alice"))
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["query"] == "茅台"
+    assert payload["total"] == 1
+    assert payload["items"][0]["code"] == "600519"
+    assert payload["items"][0]["name"] == "贵州茅台"
+
+
 def test_market_workbench_returns_quote_and_limited_bars(monkeypatch):
     monkeypatch.setattr(
         server,

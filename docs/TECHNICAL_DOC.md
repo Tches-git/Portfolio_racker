@@ -56,7 +56,7 @@
 
 ### 1.1 整体架构
 
-系统采用 **多 Agent 编排 + RAG 知识增强** 的双引擎架构，核心流程分为三个阶段：
+系统采用 **AutoGen 多角色 Agent 工作流 + RAG 知识增强** 的双引擎架构，核心流程分为三个阶段：
 
 ```
 用户输入股票代码 (CLI / Next.js 前端)
@@ -68,10 +68,10 @@
 │    PDF年报扫描 → 分块 → Embedding → FAISS 索引            │
 │    增量构建：仅处理新增/变更文档（MD5 指纹去重）           │
 │                                                          │
-│  阶段 2: Research Agent（自主研究）                        │
-│    Planning  → 制定 5-12 步研究计划                       │
-│    Acting    → ReAct 循环调用 11 个金融工具                │
-│    Reflection→ LLM 自评 + 缺失项自动补研                  │
+│  阶段 2: AutoGen 多角色研究工作流                          │
+│    Planner → Market Analyst → Event Analyst               │
+│    Risk Reviewer → Report Writer → Citation Auditor       │
+│    固定角色顺序 + 工具调用 + Trace + 降级记录              │
 │                                                          │
 │  阶段 3: Report Agent（RAG 增强写作）                     │
 │    5 轮主题检索 → FAISS 召回 → LLM 重排序                 │
@@ -89,7 +89,7 @@
 
 | 模块 | 文件 | 职责 | 关键设计 |
 |------|------|------|----------|
-| **ReAct Agent** | `agent/react_agent.py` | 三阶段推理引擎 | 支持 Function Calling 和文本 ReAct 双模式，失败自动回退 |
+| **AutoGen 多角色 Agent** | `agent/multi_agent.py` | 六角色研报工作流 | 规划、数据分析、事件分析、风险复核、报告写作、引用审计 |
 | **工具集** | `agent/tools.py` | 11 个金融分析工具 | 内置重试（最多 3 次指数退避）+ 调用缓存（相同参数复用结果） |
 | **RAG 知识库** | `rag/knowledge_base.py` | 知识管理与检索 | 增量构建 + MD5 去重 + LLM 重排序 + 分析结论反哺 |
 | **向量存储** | `rag/vector_store.py` | FAISS 向量检索 | L2 归一化 + 内积检索（等价余弦相似度），无 FAISS 时自动回退 numpy |
@@ -135,7 +135,7 @@ akshare API ──→ 公司信息/财务/同行/新闻
 1. `main.py` 或 Web 页面接收股票代码
 2. `ReportEngine` 初始化运行指标采集与编排器
 3. `AgentOrchestrator` 初始化知识库、读取历史记忆、预取公司与财务数据
-4. `ReActAgent` 进入研究阶段，按计划调用工具完成研究、反思与补研
+4. AutoGen 多角色工作流进入研究阶段，按固定角色顺序完成规划、数据分析、事件分析、风险复核、写作 brief 和引用审计
 5. 编排器将研究结论、历史对比、RAG 检索结果拼装为写作上下文
 6. 写作阶段生成研报，并进行后处理修补与结构增强
 7. 保存 trace、运行指标、分析记忆与实验评测产物
@@ -145,16 +145,20 @@ akshare API ──→ 公司信息/财务/同行/新闻
 
 ## 三、关键技术设计
 
-### 2.1 双模式 Agent 推理
+### 2.1 多角色 Agent 工作流
 
-系统实现了两种 Agent 推理模式，运行时动态选择：
+系统将研报生成拆分为六个稳定角色，降低单一 Agent 在长链路任务中的上下文漂移风险：
 
-| 模式 | 触发条件 | 优势 | 劣势 |
-|------|----------|------|------|
-| **Function Calling** | 默认优先 | 结构化输入输出，LLM 直接返回工具名和参数 JSON | 依赖模型的 FC 能力，部分模型支持不稳定 |
-| **文本 ReAct** | FC 失败时自动回退 | 兼容性强，任何 LLM 均可运行 | 需正则解析 `Thought/Action/Action Input`，偶有格式错误 |
+| 角色 | 职责 |
+|------|------|
+| **PlannerAgent** | 拆解研究目标、确定角色分工和关键问题 |
+| **MarketDataAgent** | 调用行情、财务、估值、趋势和评分工具 |
+| **EventAnalysisAgent** | 处理公告、新闻、触发事件和市场消息 |
+| **RiskReviewAgent** | 复核风险、数据缺口和异常降级状态 |
+| **ReportWriterAgent** | 汇总多角色输出，形成报告写作 brief |
+| **CitationAuditAgent** | 检查引用覆盖、来源数量和无来源观点风险 |
 
-**回退机制**：`_act()` 方法先尝试 Function Calling，捕获异常后调用 `_act_text_mode()`，保证系统鲁棒性。
+**回退机制**：AutoGen runtime 不可用或非关键角色异常时，系统记录降级状态并使用已有结构化上下文继续执行；Planner / Writer 等关键阶段失败时任务失败并写入清晰错误。
 
 ### 2.2 RAG 检索管线
 
@@ -295,7 +299,7 @@ Research Agent 完成推理后，系统自动进入反思阶段：
 
 - 初始化 tracer、知识库、历史记忆
 - 并发预取股票 profile 与财务数据
-- 构建研究任务 prompt 并运行 `ReActAgent`
+- 构建研究任务上下文并运行 AutoGen 多角色工作流
 - 将研究结果写入 `state.sections`
 - 触发知识回灌、数据缺口收集、RAG 增强写作
 - 对报告进行后处理修补
@@ -427,7 +431,7 @@ python main.py ablation --llm-judge
 | 工具调用缓存 | 相同工具+相同参数 → 复用 observation | 避免重复 API 调用（反思补研时生效） |
 | RAG 增量构建 | MD5 指纹比对，仅处理变更文档 | 二次启动无需重建索引 |
 | 重排序缓存 | query+候选文档哈希 → 缓存 top_k 结果 | 相同查询不重复调用 LLM |
-| 上下文窗口管理 | 文本 ReAct 消息裁剪 + 报告写作上下文压缩 | 降低 prompt 超长风险 |
+| 上下文窗口管理 | 多角色阶段摘要 + 报告写作上下文压缩 | 降低 prompt 超长风险 |
 | 运行指标采集 | Engine 记录耗时/Token/LLM调用/工具调用/错误数 | 支持性能分析和实验对比 |
 | 报告后处理 | 标题归一、缺失章节补齐、风险/投资建议段增强 | 提升研报结构稳定性与可读性 |
 | 配置校验 | `validate_runtime_config()` + `ensure_runtime_config()` | 运行前尽早发现非法配置 |
@@ -478,7 +482,7 @@ python main.py ablation --llm-judge
 | LLM | 智谱 GLM-5.1 | OpenAI GPT-4 / 通义千问 | 国产模型，支持中文金融语料，Function Calling 能力完善，价格低 |
 | 向量检索 | FAISS (IndexFlatIP) | Milvus / Chroma | 无需外部服务，本地运行，对数据规模（<1万条）够用 |
 | 数据源 | akshare | Tushare / Wind | 开源免费，覆盖 A 股全量数据，无需 Token 配额 |
-| Agent 框架 | 自研 ReAct | LangChain / AutoGen | 可控性强，减少黑盒依赖，便于调试和定制 Prompt |
+| Agent 框架 | AutoGen AgentChat 多角色工作流 | LangChain / CrewAI / 单 Agent | 角色边界清晰，适合研报生成这类规划、分析、复核、写作和审计分工明确的任务 |
 | 前端 | FastAPI + Next.js | Gradio / 纯模板页面 | 前后端分离，更适合任务中心、历史页与长期产品化演进 |
 | Embedding | 智谱 embedding-3 (2048d) | OpenAI ada / BGE | 与 LLM 同一平台，API 调用统一，中文语义理解好 |
 
@@ -511,8 +515,9 @@ python main.py ablation --llm-judge
 │   ├── llm.py                  # LLM 统一调用层（chat/chat_json/chat_with_tools）
 │   ├── models.py               # 数据模型（含 run_metrics）
 │   ├── agent/
-│   │   ├── orchestrator.py     # 多 Agent 编排器（627行）
-│   │   ├── react_agent.py      # ReAct 三阶段推理（473行）
+│   │   ├── orchestrator.py     # 多 Agent 编排器
+│   │   ├── multi_agent.py      # AutoGen 多角色研报工作流
+│   │   ├── autogen_adapter.py  # AutoGen 模型客户端适配
 │   │   └── tools.py            # 11 个金融工具 + 执行器
 │   ├── data_source/
 │   │   └── akshare_client.py   # A 股数据 API 封装与数据清洗治理

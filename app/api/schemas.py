@@ -89,6 +89,39 @@ class RunMetricsDTO(BaseModel):
     tool_calls: int = 0
     total_tokens: int = 0
     success: bool = False
+    citation_coverage_rate: float = 0.0
+    unsupported_claim_count: int = 0
+    source_reference_count: int = 0
+    retrieval_topk_hit_rate: float = 0.0
+    rerank_selected_count: int = 0
+    multi_agent_role_count: int = 0
+    multi_agent_completed_count: int = 0
+    multi_agent_failed_count: int = 0
+    citation_audit_coverage_rate: float = 0.0
+
+
+class MultiAgentRoleTraceDTO(BaseModel):
+    role_id: str = ""
+    role_name: str = ""
+    status: str = "pending"
+    summary: str = ""
+    tool_call_count: int = 0
+    duration_s: float = 0.0
+    fallback_used: bool = False
+    error: str = ""
+    phase: str = "pre_write"
+    objective: str = ""
+    allowed_tools: list[str] = Field(default_factory=list)
+    input_summary: str = ""
+    quality_checks: list[str] = Field(default_factory=list)
+
+
+class MultiAgentTraceDTO(BaseModel):
+    mode: str = "autogen_graphflow"
+    role_count: int = 0
+    completed_role_count: int = 0
+    failed_role_count: int = 0
+    roles: list[MultiAgentRoleTraceDTO] = Field(default_factory=list)
 
 
 class ExportArtifactDTO(BaseModel):
@@ -177,6 +210,18 @@ class StockNewsResponse(BaseModel):
     total: int = 0
 
 
+class StockSearchItemDTO(BaseModel):
+    code: str
+    name: str = ""
+    match_text: str = ""
+
+
+class StockSearchResponse(BaseModel):
+    query: str = ""
+    items: list[StockSearchItemDTO] = Field(default_factory=list)
+    total: int = 0
+
+
 class MarketDailyBarDTO(BaseModel):
     date: str = ""
     open: float = 0.0
@@ -259,6 +304,7 @@ class StockEventTimelineResponse(MarketEventListResponse):
 class TrackingAlertDTO(BaseModel):
     alert_id: str
     stock_code: str
+    stock_name: str = ""
     event_id: str
     rule_id: str = ""
     rule_name: str = ""
@@ -367,12 +413,27 @@ class WatchlistSummaryDTO(BaseModel):
     impacted_stocks: list[WatchlistImpactStockDTO] = Field(default_factory=list)
 
 
+class WatchlistMarketSnapshotDTO(BaseModel):
+    stock_code: str = ""
+    stock_name: str = ""
+    quote: MarketQuoteDTO = Field(default_factory=MarketQuoteDTO)
+    trend_30d: list[MarketDailyBarDTO] = Field(default_factory=list)
+    trend_90d: list[MarketDailyBarDTO] = Field(default_factory=list)
+    trend_180d: list[MarketDailyBarDTO] = Field(default_factory=list)
+    source_status: str = "degraded"
+    fallback_message: str = ""
+    suggestion: str = ""
+
+
 class WatchlistDetailResponse(BaseModel):
     watchlist: WatchlistDTO
     events: MarketEventListResponse = Field(default_factory=MarketEventListResponse)
     alerts: TrackingAlertListResponse = Field(default_factory=TrackingAlertListResponse)
     briefing: DailyBriefingResponse = Field(default_factory=DailyBriefingResponse)
     summary: WatchlistSummaryDTO = Field(default_factory=WatchlistSummaryDTO)
+    market_snapshots: list[WatchlistMarketSnapshotDTO] = Field(default_factory=list)
+    market_updated_at: str = ""
+    market_fallback_message: str = ""
 
 
 class EventImpactReplayItemDTO(BaseModel):
@@ -402,10 +463,50 @@ class EventImpactReviewResponse(BaseModel):
     replay_items: list[EventImpactReplayItemDTO] = Field(default_factory=list)
 
 
+class EventBacktestItemDTO(BaseModel):
+    event_id: str = ""
+    title: str = ""
+    published_at: str = ""
+    event_type: str = ""
+    impact_level: str = ""
+    sentiment: str = ""
+    base_date: str = ""
+    base_close: float = 0.0
+    returns: dict[str, float] = Field(default_factory=dict)
+    max_drawdown: float = 0.0
+    volume_change_pct: float = 0.0
+
+
+class EventBacktestGroupDTO(BaseModel):
+    key: str = ""
+    label: str = ""
+    event_count: int = 0
+    positive_rate: float = 0.0
+    average_returns: dict[str, float] = Field(default_factory=dict)
+    average_max_drawdown: float = 0.0
+
+
+class EventBacktestResponse(BaseModel):
+    stock_code: str = ""
+    stock_name: str = ""
+    windows: list[int] = Field(default_factory=lambda: [1, 3, 5, 10])
+    total_events: int = 0
+    matched_event_count: int = 0
+    fallback_message: str = ""
+    groups: list[EventBacktestGroupDTO] = Field(default_factory=list)
+    items: list[EventBacktestItemDTO] = Field(default_factory=list)
+
+
 class WatchlistCreateRequest(BaseModel):
     name: str = Field(min_length=1)
     stock_codes: list[str] = Field(min_length=1)
     description: str = ""
+
+
+class WatchlistUpdateRequest(BaseModel):
+    name: str | None = None
+    stock_codes: list[str] | None = None
+    description: str | None = None
 
 
 class EventAnalyzeRequest(BaseModel):
@@ -528,6 +629,7 @@ class RunObservabilityDTO(BaseModel):
 class AnalysisRunResponse(BaseModel):
     run_id: str
     stock_code: str
+    stock_name: str = ""
     status: str = "queued"
     created_at: str = ""
     updated_at: str = ""
@@ -546,6 +648,7 @@ class AnalysisRunResponse(BaseModel):
     event_report_summary: RunEventReportSummaryDTO = Field(default_factory=RunEventReportSummaryDTO)
     audit_events: list[RunAuditEventDTO] = Field(default_factory=list)
     run_metrics: RunMetricsDTO = Field(default_factory=RunMetricsDTO)
+    multi_agent_trace: MultiAgentTraceDTO = Field(default_factory=MultiAgentTraceDTO)
     actions: RunActionAvailabilityDTO = Field(default_factory=RunActionAvailabilityDTO)
     observability: RunObservabilityDTO = Field(default_factory=RunObservabilityDTO)
 
@@ -695,6 +798,7 @@ class StockWorkbenchResponse(BaseModel):
     history: StockHistoryResponse | None = None
     timeline: StockEventTimelineResponse = Field(default_factory=lambda: StockEventTimelineResponse(stock_code=""))
     impact_review: EventImpactReviewResponse = Field(default_factory=EventImpactReviewResponse)
+    event_backtest: EventBacktestResponse = Field(default_factory=EventBacktestResponse)
     related_watchlists: list[WatchlistDTO] = Field(default_factory=list)
     related_runs: AnalysisRunListResponse = Field(default_factory=AnalysisRunListResponse)
     exports: list[ExportArtifactDTO] = Field(default_factory=list)
@@ -705,3 +809,21 @@ class RunWorkbenchResponse(BaseModel):
     runs: AnalysisRunListResponse = Field(default_factory=AnalysisRunListResponse)
     selected_run: AnalysisRunResponse | None = None
     actions: list[WorkbenchActionDTO] = Field(default_factory=list)
+
+
+class QualityMetricDTO(BaseModel):
+    label: str = ""
+    value: str = ""
+    hint: str = ""
+
+
+class QualityWorkbenchResponse(BaseModel):
+    generated_at: str = ""
+    test_count: int = 0
+    tracking_eval: dict[str, object] = Field(default_factory=dict)
+    agent_eval: dict[str, object] = Field(default_factory=dict)
+    financial_qa_eval: dict[str, object] = Field(default_factory=dict)
+    rag_eval: dict[str, object] = Field(default_factory=dict)
+    run_metrics: OpsMetricsResponse = Field(default_factory=OpsMetricsResponse)
+    smoke_status: str = "待验证"
+    metrics: list[QualityMetricDTO] = Field(default_factory=list)

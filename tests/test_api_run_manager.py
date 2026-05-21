@@ -56,6 +56,32 @@ class DummyEngine:
         return state
 
 
+class TraceEngine:
+    def __init__(self, on_step=None):
+        self.on_step = on_step
+
+    def run(self, stock_code: str, *, uploaded_items=None, event_context=None):
+        state = SimpleNamespace(
+            final_report='# report',
+            stock_code=stock_code,
+            run_metrics={'duration_s': 1.0, 'llm_calls': 1, 'tool_calls': 2, 'total_tokens': 20, 'success': True},
+            run_payload={
+                'multi_agent_trace': {
+                    'mode': 'autogen_graphflow',
+                    'role_count': 7,
+                    'completed_role_count': 6,
+                    'failed_role_count': 0,
+                    'roles': [{'role_id': 'planner', 'role_name': 'PlannerAgent', 'status': 'completed'}],
+                }
+            },
+            sections={'report_export': f'report_{stock_code}_trace.md'},
+            source_refs=[],
+        )
+        if self.on_step:
+            self.on_step('research_done', '多智能体研究完成: 6 个角色', state)
+        return state
+
+
 def test_build_run_response_maps_metrics_and_exports():
     run = AnalysisRun(run_id='run_demo', stock_code='600519', status='completed')
     run.detail = 'done'
@@ -63,6 +89,7 @@ def test_build_run_response_maps_metrics_and_exports():
     run.events = [{'timestamp': '2026-05-07T11:00:00', 'status': 'completed', 'event': 'run_completed', 'detail': 'done'}]
     run.event_context = {'event_id': 'e1', 'title': '重大公告', 'impact_level': 'high'}
     run.event_report_summary = {'trigger_label': '重大公告', 'priority': 'P0 高优先级', 'event_commentary_url': '/api/v1/exports/event_commentary.md'}
+    run.multi_agent_trace = {'mode': 'autogen_graphflow', 'role_count': 6, 'completed_role_count': 6, 'failed_role_count': 0, 'roles': []}
     run.state = SimpleNamespace(run_metrics={'duration_s': 1.5, 'llm_calls': 2, 'tool_calls': 4, 'total_tokens': 88, 'success': True})
 
     payload = build_run_response(run)
@@ -76,6 +103,7 @@ def test_build_run_response_maps_metrics_and_exports():
     assert payload.event_context.title == '重大公告'
     assert payload.event_report_summary.trigger_label == '重大公告'
     assert payload.event_report_summary.event_commentary_url.endswith('event_commentary.md')
+    assert payload.multi_agent_trace.role_count == 6
     assert payload.actions.product_route == '/stocks/600519'
     assert payload.actions.suggested_next_action == '查看导出物'
     assert payload.observability.event_count == 1
@@ -125,6 +153,21 @@ def test_run_manager_executes_run_and_persists_completion(monkeypatch, tmp_path)
     assert any(item['kind'] == 'markdown' for item in current.exports)
     assert current.attempts == 1
     assert current.worker_id == ''
+
+
+def test_run_manager_persists_partial_multi_agent_trace(monkeypatch, tmp_path):
+    manager = AnalysisRunManager(output_dir=tmp_path, auto_start_workers=False)
+    monkeypatch.setattr('app.api.run_manager.ReportEngine', TraceEngine)
+    monkeypatch.setattr('app.api.run_manager.save_output_files', lambda state, root=None, timestamp=None: None)
+
+    run = manager.start_run('600519')
+    manager.execute_queued_once(worker_id='worker-test')
+    reloaded = AnalysisRunManager(output_dir=tmp_path, auto_start_workers=False)
+    current = reloaded.get_run(run.run_id)
+
+    assert current.status == 'completed'
+    assert current.multi_agent_trace['role_count'] == 7
+    assert current.multi_agent_trace['roles'][0]['role_id'] == 'planner'
 
 
 def test_run_manager_executes_event_run_with_context(monkeypatch, tmp_path):
@@ -304,7 +347,7 @@ def test_run_manager_reports_store_health_and_backup(tmp_path):
 
     assert health['backend'] == 'sqlite-wal'
     assert health['integrity'] == 'ok'
-    assert health['schema_version'] == 6
+    assert health['schema_version'] == 7
     assert Path(backup_path).exists()
     assert payload.workspace.store_backend == 'sqlite-wal'
     assert payload.workspace.backup_available is True
@@ -326,6 +369,7 @@ def test_run_manager_persists_runs_in_sqlite(tmp_path):
         events=[{'timestamp': '2026-05-07T11:00:00', 'status': 'completed', 'event': 'run_completed', 'detail': 'done'}],
         event_context={'event_id': 'e9', 'title': '业绩预告', 'impact_level': 'medium'},
         event_report_summary={'trigger_label': '业绩预告', 'priority': 'P1 持续跟踪'},
+        multi_agent_trace={'mode': 'autogen_graphflow', 'role_count': 6, 'completed_role_count': 6, 'failed_role_count': 0, 'roles': []},
         run_metrics={'duration_s': 1.5, 'llm_calls': 2, 'tool_calls': 4, 'total_tokens': 88, 'success': True},
     )
     manager._save_runs()
@@ -340,6 +384,7 @@ def test_run_manager_persists_runs_in_sqlite(tmp_path):
     assert reloaded.event_context['event_id'] == 'e9'
     assert reloaded.event_report_summary['trigger_label'] == '业绩预告'
     assert reloaded.run_metrics['total_tokens'] == 88
+    assert reloaded.multi_agent_trace['role_count'] == 6
 
 
 def test_run_manager_migrates_legacy_json_store(tmp_path):

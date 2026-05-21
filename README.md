@@ -25,7 +25,7 @@
 | 内置预警规则 | 高影响、风险暴露、来源降级、多来源共振、人工复核、监管风险规则 |
 | 预警处理闭环 | 预警状态联动事件历史，记录处理人、处理时间、处理备注和已转研报状态 |
 | 组合风险驾驶舱 | Watchlist 详情页提供组合风险分、处理率、优先动作和受影响股票排序 |
-| 智能研报生成 | 基于 ReAct Agent、RAG、金融工具链生成 A 股深度研究报告 |
+| 智能研报生成 | 基于 AutoGen 多角色 Agent 工作流、RAG、金融工具链生成 A 股深度研究报告 |
 | 事件驱动研究 | 单条事件可触发“事件点评 / 更新研报”任务，接入任务中心 |
 | 导出中心分类 | 股票工作台按研报正文、事件点评、展示交付、来源数据、运行日志分类 |
 | 可解释质量体系 | 内置估值锚、风险证据、来源降级、质量门禁、回归测试 |
@@ -70,7 +70,7 @@ npm run dev
 | 层次 | 技术 |
 |------|------|
 | 后端 API | Python, FastAPI, Uvicorn |
-| 研究引擎 | ReAct Agent, RAG, FAISS, 金融分析工具链 |
+| 研究引擎 | AutoGen AgentChat, 多角色 Agent 工作流, RAG, FAISS, 金融分析工具链 |
 | 数据源 | akshare, CNInfo/交易所披露适配, 本地历史记忆 |
 | 前端 | Next.js, React, TypeScript |
 | 工程化 | Pytest, GitHub Actions, Docker |
@@ -93,29 +93,76 @@ pytest -q
 
 ## 系统概览
 
-### ReAct Agent 三阶段推理
+### AutoGen 多角色 Agent 工作流
 
 ```
-Planning（规划） → Acting（执行） → Reflecting（反思）
-     ↓                  ↓                  ↓
-  制定分析计划      调用金融工具链       质量自检与补充
+Planner → Market Analyst → Event Analyst → Risk Reviewer → Report Writer → Citation Auditor
+   ↓             ↓                 ↓               ↓              ↓                ↓
+研究规划      财务/估值分析       事件分析        风险复核       研报写作         引用审计
 ```
 
 ### 核心组件
 
 | 组件 | 说明 |
 |------|------|
-| **ReAct Agent** | 基于“思考-行动-观察”循环的智能推理引擎 |
+| **AutoGen 多智能体** | 基于 AgentChat 的多角色研报生成工作流，固定角色顺序并记录 Trace |
 | **RAG 知识库** | 基于 FAISS 的行业知识增强模块 |
 | **金融工具链** | 11 个专业金融分析工具，覆盖数据获取到估值建模 |
 | **评测模块** | 自动化研报质量评分与诊断 |
 | **Memory** | 历史分析结果沉淀与回看、对比 |
 | **产品前端** | Next.js 工作区、事件追踪、组合跟踪、预警/简报、运行中心与任务详情入口 |
+| **简历指标增强** | Tracking Benchmark、Agent 任务评测、事件影响回测、RAG 引用可信度和 `/quality` 指标页 |
+
+## 可量化评测
+
+```bash
+# 金融事件去重 / 分类 / 预警规则评测
+python main.py tracking-eval
+
+# 从公开公告/新闻元数据构建真实事件初始样本
+python main.py build-tracking-benchmark --stock-codes 600519,300750,002594 --target-count 150 --live
+
+# 使用真实事件样本评测时不做扩展
+python main.py tracking-eval --benchmark data/benchmarks/tracking_events_real.jsonl --no-expand
+
+# 可选：扩展更大规模的可复现评测样本
+python main.py tracking-eval --target-count 1000
+
+# 项目内金融研究 Agent 任务评测
+python main.py agent-eval
+
+# 公共金融 QA/RAG benchmark 本地子集
+python main.py finance-qa-predict --benchmark <FinanceBench/FinQA/TAT-QA 子集路径> --limit 5
+python main.py finance-qa-eval --benchmark <FinanceBench/FinQA/TAT-QA 子集路径> --predictions <预测文件路径>
+
+# 外部金融知识源目录与 RAG 摘要导入
+python main.py kb-sources list
+python main.py kb-sources import --rebuild-kb
+python main.py kb-sources import --market china --rebuild-kb
+
+# 将本地公开缓存沉淀为 A 股公司知识库
+python main.py kb-cache import --rebuild-kb
+python main.py kb-cache import --stock-code 300750 --stock-code 600036 --rebuild-kb
+
+# 大规模本地公开语料扩容：A股证券目录 / FinanceBench / 事件与 Agent benchmark / 缓存条目 / 日线序列
+python main.py kb-bulk import --rebuild-kb
+
+# 研报 RAG 引用可信度评测
+python main.py rag-eval --stock-code <股票代码>
+```
+
+- `/stocks/{stockCode}?tab=backtest`：查看事件后 T+1 / T+3 / T+5 / T+10 收益、最大回撤和成交量变化。
+- `/quality`：集中展示最近一次事件评测、Agent 任务评测、公共金融 QA/RAG 评测、RAG 评测、任务运行与冒烟状态，作为简历指标口径来源。
+- [docs/BENCHMARKS.md](docs/BENCHMARKS.md)：说明真实事件样本、公共金融 QA/RAG benchmark 和项目内 Agent 任务评测的口径。
+- `data/external_knowledge_sources/catalog.json`：登记 FinGPT、FinRobot、edgartools、FinQwen、DISC-FinLLM、FinLongEval、FinQA、FinanceBench、FinAgent Benchmark、TAT-QA 等外部金融知识源，导入时会保留来源、许可证、市场、文档类型和使用边界。
+- `data/knowledge_base/stock_cache/`：由 `kb-cache import` 从本地公开缓存生成，覆盖公司画像、公告/事件证据、券商观点标题、行情入口和行业分析关注点。
+- `data/knowledge_base/bulk_corpus/`：由 `kb-bulk import` 生成，包含 A 股全市场证券目录、FinanceBench open-source full 子集、真实事件 benchmark、Agent 任务集、公告/研报缓存条目和日线行情序列，用于把 RAG 知识库扩到几千级 chunk。
+- Docker Compose 中的 `worker` 服务已从占位进程升级为独立研报任务消费者，API 只负责创建、查询、取消和重试任务。
 
 ## 仓库结构
 
 ```text
-├── main.py                 # 统一 CLI 入口（analyze / api / ablation / regression / quality-gate / human-eval）
+├── main.py                 # 统一 CLI 入口（analyze / api / tracking-eval / agent-eval / rag-eval 等）
 ├── run_ablation.py         # 消融评测兼容脚本
 ├── run_regression.py       # 黄金集回归兼容脚本
 ├── run_quality_gate.py     # 一键质量门禁兼容脚本

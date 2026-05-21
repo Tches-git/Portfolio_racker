@@ -22,6 +22,7 @@ export function SidebarNav() {
         { label: '事件预警处理台', href: '/events', icon: '!' },
         { label: '行情展示', href: '/markets', icon: '⌁' },
         { label: '任务交付中心', href: '/runs', icon: '▣' },
+        { label: '质量指标', href: '/quality', icon: '✓' },
       ],
     },
     ...(stockCode ? [{
@@ -32,6 +33,7 @@ export function SidebarNav() {
         { label: '摘要', href: `/stocks/${stockCode}?tab=summary`, icon: '≡' },
         { label: '事件', href: `/stocks/${stockCode}?tab=timeline`, icon: '◇' },
         { label: '复盘', href: `/stocks/${stockCode}?tab=history`, icon: '↺' },
+        { label: '影响回测', href: `/stocks/${stockCode}?tab=backtest`, icon: '↗' },
         { label: '交付', href: `/stocks/${stockCode}?tab=exports`, icon: '⇩' },
       ],
     }] : []),

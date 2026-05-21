@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 
 import { fetchRecentRuns } from '../lib/api'
+import { formatRunEvent, formatRunStatus } from '../lib/labels'
 import type { AnalysisRunListResponse, AnalysisRunResponse } from '../lib/types'
 
 function runTone(status: AnalysisRunResponse['status']) {
@@ -84,9 +85,9 @@ export function GlobalRunCenter() {
       <div className="globalRunList">
         {latestRuns.map((run) => (
           <Link key={run.run_id} href={`/runs/${run.run_id}`} className="globalRunItem">
-            <span className={`tag ${runTone(run.status)}`}>{run.status}</span>
+            <span className={`tag ${runTone(run.status)}`}>{formatRunStatus(run.status)}</span>
             <span className="globalRunCode">{run.stock_code}</span>
-            <span className="inlineMeta">{run.actions.suggested_next_action || run.detail || run.last_event || '暂无状态'}</span>
+            <span className="inlineMeta">{run.actions.suggested_next_action || run.detail || (run.last_event ? formatRunEvent(run.last_event) : '暂无状态')}</span>
           </Link>
         ))}
         <Link href="/runs" className="globalRunMore">查看全部任务</Link>

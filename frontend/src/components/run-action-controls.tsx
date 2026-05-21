@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { useState, useTransition } from 'react'
 
 import { archiveAnalysisRun, assignAnalysisRun, cancelAnalysisRun, retryAnalysisRun } from '../lib/api'
+import { formatRunStatus } from '../lib/labels'
 import type { AnalysisRunResponse } from '../lib/types'
 
 export function RunActionControls({ run }: { run: AnalysisRunResponse }) {
@@ -85,7 +86,7 @@ export function RunActionControls({ run }: { run: AnalysisRunResponse }) {
       <div className="statusBar compactStatusBar detailStatusBar">
         <div>
           <div className="statusLabel">即时状态</div>
-          <div className="statusHint">{optimisticRun.owner || '未分配'} · {optimisticRun.archived ? '已归档' : optimisticRun.status} · {optimisticRun.detail || '等待操作'}</div>
+          <div className="statusHint">{optimisticRun.owner || '未分配'} · {optimisticRun.archived ? '已归档' : formatRunStatus(optimisticRun.status)} · {optimisticRun.detail || '等待操作'}</div>
         </div>
       </div>
       <div className="searchRow">
